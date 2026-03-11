@@ -1,0 +1,2152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ISIN Bond Enrichment Terminal</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=DM+Sans:wght@300;400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root, [data-theme="dark"] {
+    --bg-deep: #0a0c10;
+    --bg-panel: #11141a;
+    --bg-card: #161a22;
+    --bg-elevated: #1c2029;
+    --border-subtle: rgba(255,255,255,0.06);
+    --border-active: rgba(214,171,85,0.3);
+    --text-primary: #e8e4dd;
+    --text-secondary: #8a8578;
+    --text-muted: #565248;
+    --accent-gold: #d6ab55;
+    --accent-gold-dim: rgba(214,171,85,0.15);
+    --accent-amber: #c9943e;
+    --accent-green: #4ade80;
+    --accent-green-dim: rgba(74,222,128,0.12);
+    --accent-red: #f87171;
+    --accent-red-dim: rgba(248,113,113,0.12);
+    --accent-blue: #60a5fa;
+    --accent-blue-dim: rgba(96,165,250,0.12);
+    --accent-cyan: #22d3ee;
+    --radius-sm: 4px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --mono: 'JetBrains Mono', monospace;
+    --sans: 'DM Sans', sans-serif;
+    --serif: 'Instrument Serif', serif;
+    --noise-opacity: 0.025;
+    --modal-overlay: rgba(0,0,0,0.7);
+    --modal-shadow: 0 24px 80px rgba(0,0,0,0.6), 0 0 60px rgba(214,171,85,0.08);
+    --bar-fill-text: var(--bg-deep);
+    --tag-em-bg: rgba(168,85,247,0.12);
+    --tag-em-color: #a855f7;
+    --tag-credit-bg: rgba(251,146,60,0.12);
+    --tag-credit-color: #fb923c;
+    --shimmer-color: rgba(255,255,255,0.2);
+    --scrollbar-thumb: var(--text-muted);
+  }
+
+  [data-theme="light"] {
+    --bg-deep: #f2efe9;
+    --bg-panel: #ffffff;
+    --bg-card: #f8f6f2;
+    --bg-elevated: #edeae4;
+    --border-subtle: rgba(0,0,0,0.08);
+    --border-active: rgba(174,124,30,0.35);
+    --text-primary: #1a1710;
+    --text-secondary: #5c5548;
+    --text-muted: #9c9485;
+    --accent-gold: #ae7c1e;
+    --accent-gold-dim: rgba(174,124,30,0.1);
+    --accent-amber: #96690f;
+    --accent-green: #16a34a;
+    --accent-green-dim: rgba(22,163,74,0.08);
+    --accent-red: #dc2626;
+    --accent-red-dim: rgba(220,38,38,0.07);
+    --accent-blue: #2563eb;
+    --accent-blue-dim: rgba(37,99,235,0.07);
+    --accent-cyan: #0891b2;
+    --noise-opacity: 0.015;
+    --modal-overlay: rgba(0,0,0,0.35);
+    --modal-shadow: 0 24px 80px rgba(0,0,0,0.12), 0 0 0 1px rgba(0,0,0,0.06);
+    --bar-fill-text: #ffffff;
+    --tag-em-bg: rgba(126,58,210,0.08);
+    --tag-em-color: #7e3ad2;
+    --tag-credit-bg: rgba(217,119,6,0.08);
+    --tag-credit-color: #b45309;
+    --shimmer-color: rgba(255,255,255,0.45);
+    --scrollbar-thumb: #c4bfb5;
+  }
+
+  html { font-size: 14px; }
+
+  body {
+    font-family: var(--sans);
+    background: var(--bg-deep);
+    color: var(--text-primary);
+    min-height: 100vh;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ── Noise overlay ── */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    opacity: var(--noise-opacity);
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  /* ── Scrollbar ── */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 3px; }
+
+  /* ── Layout Shell ── */
+  .shell {
+    max-width: 1440px;
+    margin: 0 auto;
+    padding: 24px 32px;
+  }
+
+  /* ── Header ── */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 0 28px;
+    border-bottom: 1px solid var(--border-subtle);
+    margin-bottom: 32px;
+  }
+
+  .header-brand {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .header-logo {
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radius-md);
+    background: linear-gradient(135deg, var(--accent-gold) 0%, var(--accent-amber) 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--serif);
+    font-size: 22px;
+    color: var(--bg-deep);
+    font-weight: 700;
+    box-shadow: 0 0 24px rgba(214,171,85,0.2);
+  }
+
+  .header-title {
+    font-family: var(--serif);
+    font-size: 24px;
+    color: var(--text-primary);
+    letter-spacing: -0.02em;
+  }
+
+  .header-subtitle {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-top: 2px;
+  }
+
+  .header-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-secondary);
+  }
+
+  .status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent-green);
+    box-shadow: 0 0 8px rgba(74,222,128,0.4);
+    animation: pulse-dot 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  /* ── Pipeline Steps ── */
+  .pipeline-steps {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    margin-bottom: 36px;
+    padding: 0 4px;
+  }
+
+  .pipeline-step {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 18px;
+    border-radius: var(--radius-md);
+    background: transparent;
+    cursor: default;
+    transition: all 0.3s ease;
+    position: relative;
+  }
+
+  .pipeline-step.active {
+    background: var(--accent-gold-dim);
+  }
+
+  .pipeline-step.completed {
+    background: var(--accent-green-dim);
+  }
+
+  .pipeline-step-num {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: 1.5px solid var(--text-muted);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    transition: all 0.3s ease;
+    flex-shrink: 0;
+  }
+
+  .pipeline-step.active .pipeline-step-num {
+    border-color: var(--accent-gold);
+    color: var(--accent-gold);
+    box-shadow: 0 0 12px rgba(214,171,85,0.25);
+  }
+
+  .pipeline-step.completed .pipeline-step-num {
+    border-color: var(--accent-green);
+    color: var(--accent-green);
+    background: var(--accent-green-dim);
+  }
+
+  .pipeline-step-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    white-space: nowrap;
+    transition: color 0.3s;
+  }
+
+  .pipeline-step.active .pipeline-step-label { color: var(--accent-gold); }
+  .pipeline-step.completed .pipeline-step-label { color: var(--accent-green); }
+
+  .pipeline-connector {
+    flex: 1;
+    height: 1px;
+    background: var(--border-subtle);
+    min-width: 20px;
+    position: relative;
+  }
+
+  .pipeline-connector.completed {
+    background: linear-gradient(90deg, var(--accent-green), var(--accent-green));
+    box-shadow: 0 0 6px rgba(74,222,128,0.2);
+  }
+
+  /* ── Cards ── */
+  .card {
+    background: var(--bg-panel);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    padding: 24px;
+    margin-bottom: 20px;
+    transition: border-color 0.3s;
+  }
+
+  .card.active-card {
+    border-color: var(--border-active);
+    box-shadow: 0 0 40px rgba(214,171,85,0.04);
+  }
+
+  .card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+  }
+
+  .card-title {
+    font-family: var(--serif);
+    font-size: 18px;
+    color: var(--text-primary);
+  }
+
+  .card-badge {
+    font-family: var(--mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    padding: 4px 10px;
+    border-radius: 20px;
+    border: 1px solid;
+  }
+
+  .badge-pending {
+    color: var(--text-muted);
+    border-color: var(--text-muted);
+  }
+
+  .badge-active {
+    color: var(--accent-gold);
+    border-color: var(--accent-gold);
+    background: var(--accent-gold-dim);
+    animation: badge-glow 2s ease-in-out infinite;
+  }
+
+  .badge-done {
+    color: var(--accent-green);
+    border-color: var(--accent-green);
+    background: var(--accent-green-dim);
+  }
+
+  .badge-error {
+    color: var(--accent-red);
+    border-color: var(--accent-red);
+    background: var(--accent-red-dim);
+  }
+
+  @keyframes badge-glow {
+    0%, 100% { box-shadow: 0 0 8px rgba(214,171,85,0); }
+    50% { box-shadow: 0 0 8px rgba(214,171,85,0.2); }
+  }
+
+  /* ── File Upload ── */
+  .upload-zone {
+    border: 2px dashed var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: 48px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .upload-zone:hover {
+    border-color: var(--accent-gold);
+    background: var(--accent-gold-dim);
+  }
+
+  .upload-zone.dragover {
+    border-color: var(--accent-gold);
+    background: var(--accent-gold-dim);
+    transform: scale(1.01);
+  }
+
+  .upload-icon {
+    font-size: 36px;
+    margin-bottom: 12px;
+    opacity: 0.6;
+  }
+
+  .upload-text {
+    font-size: 15px;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+  }
+
+  .upload-hint {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .upload-input { display: none; }
+
+  /* ── Progress Bar ── */
+  .progress-container {
+    margin: 16px 0;
+  }
+
+  .progress-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+
+  .progress-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-secondary);
+  }
+
+  .progress-value {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent-gold);
+  }
+
+  .progress-track {
+    height: 6px;
+    background: var(--bg-deep);
+    border-radius: 3px;
+    overflow: hidden;
+    position: relative;
+  }
+
+  .progress-fill {
+    height: 100%;
+    border-radius: 3px;
+    background: linear-gradient(90deg, var(--accent-amber), var(--accent-gold));
+    transition: width 0.4s ease;
+    position: relative;
+    box-shadow: 0 0 12px rgba(214,171,85,0.3);
+  }
+
+  .progress-fill::after {
+    content: '';
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 60px;
+    background: linear-gradient(90deg, transparent, var(--shimmer-color));
+    animation: shimmer 1.5s ease-in-out infinite;
+  }
+
+  @keyframes shimmer {
+    0% { opacity: 0; }
+    50% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+
+  .progress-fill.done {
+    background: linear-gradient(90deg, #34d399, var(--accent-green));
+    box-shadow: 0 0 12px rgba(74,222,128,0.3);
+  }
+
+  /* ── Spinner ── */
+  .spinner {
+    display: inline-block;
+    width: 18px;
+    height: 18px;
+    border: 2px solid var(--border-subtle);
+    border-top-color: var(--accent-gold);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  .spinner-sm {
+    width: 14px;
+    height: 14px;
+    border-width: 1.5px;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  /* ── Log Feed ── */
+  .log-feed {
+    background: var(--bg-deep);
+    border-radius: var(--radius-md);
+    padding: 16px;
+    max-height: 200px;
+    overflow-y: auto;
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.8;
+  }
+
+  .log-line {
+    display: flex;
+    gap: 12px;
+    animation: log-in 0.3s ease;
+  }
+
+  @keyframes log-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .log-time {
+    color: var(--text-muted);
+    flex-shrink: 0;
+    min-width: 70px;
+  }
+
+  .log-msg { color: var(--text-secondary); }
+  .log-msg.success { color: var(--accent-green); }
+  .log-msg.error { color: var(--accent-red); }
+  .log-msg.warn { color: var(--accent-gold); }
+  .log-msg.info { color: var(--accent-blue); }
+
+  /* (batch grid removed — using progress bars instead) */
+
+  /* ── Stats Row ── */
+  .stats-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin: 20px 0;
+  }
+
+  .stat-box {
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: 16px;
+    text-align: center;
+  }
+
+  .stat-value {
+    font-family: var(--mono);
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--text-primary);
+    line-height: 1.2;
+  }
+
+  .stat-value.gold { color: var(--accent-gold); }
+  .stat-value.green { color: var(--accent-green); }
+  .stat-value.blue { color: var(--accent-blue); }
+  .stat-value.red { color: var(--accent-red); }
+
+  .stat-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-muted);
+    margin-top: 6px;
+  }
+
+  /* ── CIQ Modal ── */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: var(--modal-overlay);
+    backdrop-filter: blur(8px);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    animation: fade-in 0.3s ease;
+  }
+
+  .modal-overlay.visible {
+    display: flex;
+  }
+
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  .modal {
+    background: var(--bg-panel);
+    border: 1px solid var(--border-active);
+    border-radius: var(--radius-lg);
+    padding: 36px;
+    max-width: 560px;
+    width: 90%;
+    box-shadow: var(--modal-shadow);
+    animation: modal-in 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  @keyframes modal-in {
+    from { opacity: 0; transform: translateY(20px) scale(0.97); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+  .modal-icon {
+    width: 56px;
+    height: 56px;
+    border-radius: var(--radius-md);
+    background: var(--accent-gold-dim);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 28px;
+    margin-bottom: 20px;
+    border: 1px solid var(--border-active);
+  }
+
+  .modal-title {
+    font-family: var(--serif);
+    font-size: 22px;
+    margin-bottom: 12px;
+    color: var(--text-primary);
+  }
+
+  .modal-body {
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.7;
+    margin-bottom: 24px;
+  }
+
+  .modal-steps {
+    list-style: none;
+    margin: 16px 0;
+    padding: 0;
+  }
+
+  .modal-steps li {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 8px 0;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+
+  .modal-steps li .step-num {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--accent-gold-dim);
+    border: 1px solid var(--accent-gold);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--accent-gold);
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+
+  .modal-actions {
+    display: flex;
+    gap: 12px;
+    justify-content: flex-end;
+  }
+
+  .btn {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    padding: 10px 24px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-subtle);
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s;
+    text-transform: uppercase;
+  }
+
+  .btn:hover {
+    border-color: var(--text-secondary);
+    color: var(--text-primary);
+  }
+
+  .btn-primary {
+    background: linear-gradient(135deg, var(--accent-gold), var(--accent-amber));
+    color: var(--bg-deep);
+    border-color: var(--accent-gold);
+  }
+
+  .btn-primary:hover {
+    box-shadow: 0 0 20px rgba(214,171,85,0.3);
+    color: var(--bg-deep);
+    transform: translateY(-1px);
+  }
+
+  .btn-start {
+    width: 100%;
+    padding: 14px 24px;
+    font-size: 13px;
+    margin-top: 16px;
+  }
+
+  /* ── Data Table ── */
+  .table-wrap {
+    overflow-x: auto;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-subtle);
+  }
+
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--mono);
+    font-size: 11px;
+  }
+
+  .data-table thead {
+    background: var(--bg-deep);
+    position: sticky;
+    top: 0;
+  }
+
+  .data-table th {
+    padding: 10px 14px;
+    text-align: left;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    font-size: 10px;
+    border-bottom: 1px solid var(--border-subtle);
+    white-space: nowrap;
+  }
+
+  .data-table td {
+    padding: 9px 14px;
+    border-bottom: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    white-space: nowrap;
+  }
+
+  .data-table tbody tr {
+    transition: background 0.15s;
+  }
+
+  .data-table tbody tr:hover {
+    background: var(--bg-elevated);
+  }
+
+  .data-table .isin-cell {
+    color: var(--text-primary);
+    font-weight: 500;
+  }
+
+  .tag {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .tag-g10 { background: var(--accent-blue-dim); color: var(--accent-blue); }
+  .tag-em { background: var(--tag-em-bg); color: var(--tag-em-color); }
+  .tag-rate { background: var(--accent-green-dim); color: var(--accent-green); }
+  .tag-credit { background: var(--tag-credit-bg); color: var(--tag-credit-color); }
+
+  /* ── CIQ Formula Status Cells ── */
+  .ciq-requesting {
+    color: var(--accent-gold) !important;
+    animation: blink 1.2s step-end infinite;
+  }
+
+  .ciq-loaded {
+    color: var(--accent-green) !important;
+  }
+
+  .ciq-error {
+    color: var(--accent-red) !important;
+  }
+
+  @keyframes blink {
+    50% { opacity: 0.3; }
+  }
+
+  /* ── Summary Panel ── */
+  .summary-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+
+  .summary-chart {
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: 20px;
+  }
+
+  .chart-title {
+    font-family: var(--mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-muted);
+    margin-bottom: 16px;
+  }
+
+  .bar-chart-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+
+  .bar-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-secondary);
+    min-width: 60px;
+    text-align: right;
+  }
+
+  .bar-track {
+    flex: 1;
+    height: 24px;
+    background: var(--bg-deep);
+    border-radius: 4px;
+    overflow: hidden;
+    position: relative;
+  }
+
+  .bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 1s cubic-bezier(0.16, 1, 0.3, 1);
+    display: flex;
+    align-items: center;
+    padding-left: 10px;
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--bar-fill-text);
+  }
+
+  .bar-fill.gold { background: linear-gradient(90deg, var(--accent-amber), var(--accent-gold)); }
+  .bar-fill.green { background: linear-gradient(90deg, #34d399, var(--accent-green)); }
+  .bar-fill.blue { background: linear-gradient(90deg, #3b82f6, var(--accent-blue)); }
+  .bar-fill.purple { background: linear-gradient(90deg, #8b5cf6, #a855f7); }
+  .bar-fill.orange { background: linear-gradient(90deg, #f59e0b, #fb923c); }
+
+  /* ── Section Divider ── */
+  .section-hidden { display: none; }
+  .section-visible {
+    display: block;
+    animation: section-in 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  @keyframes section-in {
+    from { opacity: 0; transform: translateY(16px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* ── File Info Row ── */
+  .file-info {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 14px 16px;
+    background: var(--bg-card);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-subtle);
+    margin-top: 16px;
+  }
+
+  .file-icon {
+    font-size: 24px;
+    opacity: 0.7;
+  }
+
+  .file-details { flex: 1; }
+
+  .file-name {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--text-primary);
+    font-weight: 500;
+  }
+
+  .file-meta {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+
+  /* ── Two Col Layout ── */
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+
+  @media (max-width: 900px) {
+    .two-col, .stats-row, .summary-grid {
+      grid-template-columns: 1fr;
+    }
+    .pipeline-steps {
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .pipeline-connector { display: none; }
+  }
+
+  /* ── Elapsed timer ── */
+  .timer {
+    font-family: var(--mono);
+    font-size: 20px;
+    font-weight: 300;
+    color: var(--accent-gold);
+    letter-spacing: 0.05em;
+  }
+
+  .timer-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-top: 2px;
+  }
+
+  /* ── CIQ Status Indicator ── */
+  .ciq-status-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 8px;
+    margin: 16px 0;
+  }
+
+  .ciq-formula-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--bg-deep);
+    border-radius: var(--radius-sm);
+    font-family: var(--mono);
+    font-size: 11px;
+  }
+
+  .ciq-formula-status .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .dot-loading { background: var(--accent-gold); animation: pulse-dot 1s infinite; }
+  .dot-done { background: var(--accent-green); }
+  .dot-error { background: var(--accent-red); }
+
+  /* Download button */
+  .btn-download {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: linear-gradient(135deg, var(--accent-green), #34d399);
+    color: var(--bg-deep);
+    border-color: var(--accent-green);
+    font-size: 13px;
+    padding: 12px 28px;
+  }
+
+  .btn-download:hover {
+    box-shadow: 0 0 24px rgba(74,222,128,0.3);
+    color: var(--bg-deep);
+  }
+
+  /* ── Theme Toggle ── */
+  .theme-toggle {
+    position: relative;
+    width: 52px;
+    height: 28px;
+    border-radius: 14px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    cursor: pointer;
+    transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    display: flex;
+    align-items: center;
+    padding: 0 4px;
+    flex-shrink: 0;
+  }
+
+  .theme-toggle:hover {
+    border-color: var(--accent-gold);
+  }
+
+  .theme-toggle-thumb {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--accent-gold);
+    transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+    transform: translateX(0);
+  }
+
+  [data-theme="light"] .theme-toggle-thumb {
+    transform: translateX(23px);
+  }
+
+  [data-theme="light"] .theme-toggle {
+    background: var(--bg-elevated);
+  }
+
+  .theme-toggle-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    margin-right: 8px;
+  }
+
+  /* ── Light theme refinements ── */
+  [data-theme="light"] .header-logo {
+    box-shadow: 0 2px 12px rgba(174,124,30,0.2);
+  }
+
+  [data-theme="light"] .status-dot {
+    box-shadow: 0 0 8px rgba(22,163,74,0.35);
+  }
+
+  [data-theme="light"] .pipeline-step.active .pipeline-step-num {
+    box-shadow: 0 0 10px rgba(174,124,30,0.2);
+  }
+
+  [data-theme="light"] .progress-fill {
+    box-shadow: 0 0 10px rgba(174,124,30,0.25);
+  }
+
+  [data-theme="light"] .progress-fill.done {
+    box-shadow: 0 0 10px rgba(22,163,74,0.25);
+  }
+
+  [data-theme="light"] .btn-primary {
+    color: #fff;
+  }
+
+  [data-theme="light"] .btn-primary:hover {
+    box-shadow: 0 4px 16px rgba(174,124,30,0.25);
+    color: #fff;
+  }
+
+  [data-theme="light"] .btn-download {
+    color: #fff;
+  }
+
+  [data-theme="light"] .btn-download:hover {
+    color: #fff;
+    box-shadow: 0 4px 16px rgba(22,163,74,0.25);
+  }
+
+  [data-theme="light"] .card {
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  }
+
+  [data-theme="light"] .card.active-card {
+    box-shadow: 0 2px 12px rgba(174,124,30,0.06);
+  }
+
+  [data-theme="light"] .stat-box {
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  }
+
+  [data-theme="light"] .log-feed {
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+  }
+
+  [data-theme="light"] .data-table thead {
+    background: var(--bg-card);
+  }
+
+  /* smooth transition on theme swap */
+  body, .card, .stat-box, .log-feed, .btn, .progress-track, .progress-fill,
+  .pipeline-step, .upload-zone, .header, .modal, .modal-overlay,
+  .data-table thead, .data-table td, .data-table tbody tr,
+  .summary-chart, .bar-track, .file-info, .ciq-formula-status, .theme-toggle {
+    transition: background 0.4s ease, border-color 0.4s ease, color 0.4s ease, box-shadow 0.4s ease;
+  }
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <!-- Header -->
+  <header class="header">
+    <div class="header-brand">
+      <div class="header-logo">B</div>
+      <div>
+        <div class="header-title">Bond Enrichment Terminal</div>
+        <div class="header-subtitle">ISIN &rarr; OpenFIGI &rarr; Capital IQ &rarr; Export</div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:20px">
+      <div class="header-status">
+        <span class="status-dot"></span>
+        <span id="headerStatusText">Ready</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span class="theme-toggle-label">Theme</span>
+        <div class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Toggle light/dark theme">
+          <div class="theme-toggle-thumb" id="themeThumb">
+            <span id="themeIcon">&#x1F319;</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Pipeline Steps -->
+  <div class="pipeline-steps">
+    <div class="pipeline-step active" id="pStep1">
+      <div class="pipeline-step-num">1</div>
+      <div class="pipeline-step-label">Upload ISINs</div>
+    </div>
+    <div class="pipeline-connector" id="pConn1"></div>
+    <div class="pipeline-step" id="pStep2">
+      <div class="pipeline-step-num">2</div>
+      <div class="pipeline-step-label">OpenFIGI Lookup</div>
+    </div>
+    <div class="pipeline-connector" id="pConn2"></div>
+    <div class="pipeline-step" id="pStep3">
+      <div class="pipeline-step-num">3</div>
+      <div class="pipeline-step-label">Capital IQ</div>
+    </div>
+    <div class="pipeline-connector" id="pConn3"></div>
+    <div class="pipeline-step" id="pStep4">
+      <div class="pipeline-step-num">4</div>
+      <div class="pipeline-step-label">Merge &amp; Export</div>
+    </div>
+  </div>
+
+  <!-- STEP 1: Upload -->
+  <div id="section-upload" class="section-visible">
+    <div class="card active-card">
+      <div class="card-header">
+        <div class="card-title">Upload ISIN File</div>
+        <span class="card-badge badge-active">Step 1</span>
+      </div>
+      <div class="upload-zone" id="uploadZone">
+        <div class="upload-icon">&#x1F4C4;</div>
+        <div class="upload-text">Drop your Excel or CSV file here</div>
+        <div class="upload-hint">.xlsx &middot; .csv &middot; Contains ISIN column</div>
+        <input type="file" class="upload-input" id="fileInput" accept=".xlsx,.csv,.xls">
+      </div>
+      <div id="fileInfoBox" style="display:none">
+        <div class="file-info">
+          <div class="file-icon">&#x1F4CA;</div>
+          <div class="file-details">
+            <div class="file-name" id="fileName"></div>
+            <div class="file-meta" id="fileMeta"></div>
+          </div>
+        </div>
+        <div style="margin-top:16px">
+          <label style="font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-muted);display:block;margin-bottom:6px">OpenFIGI API Key <span style="opacity:0.5">(optional — faster rate limits)</span></label>
+          <input type="text" id="apiKeyInput" placeholder="Enter API key or leave blank for public access" style="
+            width:100%;padding:10px 14px;font-family:var(--mono);font-size:12px;
+            background:var(--bg-deep);color:var(--text-primary);
+            border:1px solid var(--border-subtle);border-radius:var(--radius-md);
+            outline:none;transition:border-color 0.2s;
+          " onfocus="this.style.borderColor='var(--accent-gold)'" onblur="this.style.borderColor='var(--border-subtle)'">
+        </div>
+        <button class="btn btn-primary btn-start" id="btnStart" onclick="startPipeline()">
+          Begin Enrichment Pipeline
+        </button>
+      </div>
+
+      <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border-subtle);text-align:center">
+        <div style="font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:0.1em;color:var(--text-muted);margin-bottom:8px">Or try it out</div>
+        <button class="btn" id="btnDemo" onclick="startDemo()" style="padding:10px 28px">
+          &#x25B6; Run Demo with Sample Data
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 2: OpenFIGI -->
+  <div id="section-openfigi" class="section-hidden">
+    <div class="card active-card">
+      <div class="card-header">
+        <div class="card-title">OpenFIGI API Lookup</div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <span class="card-badge badge-active" id="openfigiBadge">Processing</span>
+          <div class="spinner" id="openfigiSpinner"></div>
+        </div>
+      </div>
+
+      <div class="two-col">
+        <div>
+          <div class="progress-container">
+            <div class="progress-header">
+              <span class="progress-label" id="batchLabel">Batch 0 / 0</span>
+              <span class="progress-value" id="batchPct">0%</span>
+            </div>
+            <div class="progress-track">
+              <div class="progress-fill" id="batchProgress" style="width:0%"></div>
+            </div>
+          </div>
+
+          <div style="margin-top:16px;display:flex;align-items:center;justify-content:space-between">
+            <div>
+              <div class="timer" id="elapsedTimer">00:00</div>
+              <div class="timer-label">Elapsed</div>
+            </div>
+            <div style="text-align:right">
+              <div class="timer" id="etaTimer">--:--</div>
+              <div class="timer-label">ETA</div>
+            </div>
+          </div>
+
+          <div class="progress-container" style="margin-top:16px">
+            <div class="progress-header">
+              <span class="progress-label" id="isinLabel">ISINs processed: 0 / 0</span>
+              <span class="progress-value" id="isinMatchRate">--</span>
+            </div>
+            <div class="progress-track">
+              <div class="progress-fill" id="isinProgress" style="width:0%"></div>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div class="log-feed" id="openfigiLog"></div>
+        </div>
+      </div>
+
+      <div id="openfigiStats" style="display:none">
+        <div class="stats-row" style="grid-template-columns:repeat(5,1fr)">
+          <div class="stat-box">
+            <div class="stat-value green" id="statMatched">0</div>
+            <div class="stat-label">Matched</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value gold" id="statNotFound">0</div>
+            <div class="stat-label">Not in FIGI</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value red" id="statErrors">0</div>
+            <div class="stat-label">API Errors</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value blue" id="statG10">0</div>
+            <div class="stat-label">G10</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value" style="color:var(--tag-em-color)" id="statEM">0</div>
+            <div class="stat-label">EM</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 3: Capital IQ -->
+  <div id="section-capiq" class="section-hidden">
+    <div class="card active-card">
+      <div class="card-header">
+        <div class="card-title">Capital IQ Enrichment</div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <span class="card-badge badge-active" id="capiqBadge">Awaiting User</span>
+          <div class="spinner" id="capiqSpinner" style="display:none"></div>
+        </div>
+      </div>
+
+      <div id="capiqWaiting">
+        <div style="text-align:center; padding:20px 0">
+          <div style="font-size:40px; margin-bottom:12px; opacity:0.7">&#x1F4CA;</div>
+          <div style="font-family:var(--serif); font-size:18px; margin-bottom:8px">Open the Capital IQ Template</div>
+          <div style="font-family:var(--mono); font-size:12px; color:var(--text-muted); max-width:420px; margin:0 auto; line-height:1.7">
+            ISINs will be pasted into the CIQ Excel template. Ensure the Capital IQ add-in is loaded and you are logged in.
+          </div>
+          <button class="btn btn-primary" style="margin-top:20px; padding:12px 32px" onclick="showCIQModal()">
+            Open Template &amp; Continue
+          </button>
+        </div>
+      </div>
+
+      <div id="capiqProcessing" style="display:none">
+        <div class="progress-container">
+          <div class="progress-header">
+            <span class="progress-label" id="ciqProgressLabel">Populating ISINs...</span>
+            <span class="progress-value" id="ciqProgressPct">0%</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill" id="ciqProgress" style="width:0%"></div>
+          </div>
+        </div>
+
+        <div class="ciq-status-grid" id="ciqFormulaGrid"></div>
+
+        <div class="log-feed" id="capiqLog" style="margin-top:16px"></div>
+      </div>
+
+      <div id="capiqResults" style="display:none">
+        <div class="stats-row">
+          <div class="stat-box">
+            <div class="stat-value green" id="ciqSuccess">0</div>
+            <div class="stat-label">Formulas Loaded</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value gold" id="ciqCols">0</div>
+            <div class="stat-label">Data Columns</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value blue" id="ciqRows">0</div>
+            <div class="stat-label">Rows Enriched</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value red" id="ciqErrors">0</div>
+            <div class="stat-label">CIQ Errors</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 4: Merge & Results -->
+  <div id="section-results" class="section-hidden">
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Enriched Bond Data</div>
+        <div style="display:flex;gap:12px;align-items:center">
+          <span class="card-badge badge-done">Complete</span>
+          <button class="btn btn-download" onclick="alert('Download would trigger here')">&#x2B07; Export .xlsx</button>
+        </div>
+      </div>
+
+      <div class="table-wrap" style="max-height:420px; overflow-y:auto">
+        <table class="data-table" id="resultsTable">
+          <thead id="resultsHead"></thead>
+          <tbody id="resultsBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Summary -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Pipeline Summary</div>
+      </div>
+
+      <div class="summary-grid">
+        <div class="summary-chart">
+          <div class="chart-title">Asset Class Distribution</div>
+          <div id="chartAsset"></div>
+        </div>
+        <div class="summary-chart">
+          <div class="chart-title">Market Classification</div>
+          <div id="chartMarket"></div>
+        </div>
+      </div>
+
+      <div class="stats-row" style="margin-top:20px">
+        <div class="stat-box">
+          <div class="stat-value" id="finalTotal">0</div>
+          <div class="stat-label">Total ISINs</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value green" id="finalEnriched">0</div>
+          <div class="stat-label">Fully Enriched</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value gold" id="finalColumns">0</div>
+          <div class="stat-label">Data Fields</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value blue" id="finalTime">0s</div>
+          <div class="stat-label">Total Time</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- CIQ Modal -->
+<div class="modal-overlay" id="ciqModal">
+  <div class="modal">
+    <div class="modal-icon">&#x1F4C8;</div>
+    <div class="modal-title">Capital IQ Template Setup</div>
+    <div class="modal-body">
+      Before proceeding, please complete the following steps to ensure the Capital IQ add-in can enrich your bond data:
+      <ul class="modal-steps">
+        <li>
+          <span class="step-num">1</span>
+          <span>Open <strong>Excel</strong> manually on your machine</span>
+        </li>
+        <li>
+          <span class="step-num">2</span>
+          <span>Verify the <strong>Capital IQ add-in</strong> is loaded (check the ribbon)</span>
+        </li>
+        <li>
+          <span class="step-num">3</span>
+          <span>Log into Capital IQ if prompted for credentials</span>
+        </li>
+        <li>
+          <span class="step-num">4</span>
+          <span>Open the template file: <strong style="color:var(--accent-gold)">ISIN Template.xlsx</strong></span>
+        </li>
+        <li>
+          <span class="step-num">5</span>
+          <span>Verify a test CIQ formula returns data successfully</span>
+        </li>
+        <li>
+          <span class="step-num">6</span>
+          <span>Keep Excel and the template <strong>open</strong></span>
+        </li>
+      </ul>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="skipCIQ()">Skip CIQ</button>
+      <button class="btn btn-primary" onclick="confirmCIQ()">Template is Ready</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================================
+// THEME
+// ============================================================================
+function getPreferredTheme() {
+  const saved = localStorage.getItem('bond-terminal-theme');
+  if (saved) return saved;
+  return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+}
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  const icon = document.getElementById('themeIcon');
+  if (icon) icon.textContent = theme === 'dark' ? '\u{1F319}' : '\u{2600}\u{FE0F}';
+  localStorage.setItem('bond-terminal-theme', theme);
+}
+
+function toggleTheme() {
+  const current = document.documentElement.getAttribute('data-theme') || 'dark';
+  applyTheme(current === 'dark' ? 'light' : 'dark');
+}
+
+// Apply on load
+applyTheme(getPreferredTheme());
+
+// ============================================================================
+// STATE
+// ============================================================================
+let pipelineStartTime = null;
+let elapsedInterval = null;
+let sessionId = null;
+let ws = null;
+let uploadedFile = null;
+let allOpenFIGIResults = [];
+let isinsCount = 0;
+let isinsProcessed = 0;
+let isinsMatched = 0;
+let demoMode = false;
+
+// ============================================================================
+// UTILITY
+// ============================================================================
+function $(id) { return document.getElementById(id); }
+
+function formatTime(seconds) {
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+
+function addLog(containerId, msg, type = '') {
+  const feed = $(containerId);
+  if (!feed) return;
+  const now = new Date();
+  const time = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
+  const line = document.createElement('div');
+  line.className = 'log-line';
+  line.innerHTML = `<span class="log-time">${time}</span><span class="log-msg ${type}">${msg}</span>`;
+  feed.appendChild(line);
+  feed.scrollTop = feed.scrollHeight;
+}
+
+function setPipelineStep(stepNum) {
+  for (let i = 1; i <= 4; i++) {
+    const step = $(`pStep${i}`);
+    step.classList.remove('active', 'completed');
+    if (i < stepNum) step.classList.add('completed');
+    else if (i === stepNum) step.classList.add('active');
+  }
+  for (let i = 1; i <= 3; i++) {
+    const conn = $(`pConn${i}`);
+    conn.classList.toggle('completed', i < stepNum);
+  }
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function updateISINProgress(processed, total, matched) {
+  const pct = total > 0 ? Math.round((processed / total) * 100) : 0;
+  $('isinLabel').textContent = `ISINs processed: ${processed} / ${total}`;
+  $('isinProgress').style.width = `${pct}%`;
+  if (matched !== undefined && processed > 0) {
+    const rate = Math.round((matched / processed) * 100);
+    $('isinMatchRate').textContent = `${rate}% match`;
+  }
+}
+
+// ============================================================================
+// COMMON — mark upload as done and show step 2
+// ============================================================================
+function beginStep2() {
+  pipelineStartTime = Date.now();
+  allOpenFIGIResults = [];
+  isinsProcessed = 0;
+  isinsMatched = 0;
+
+  elapsedInterval = setInterval(() => {
+    const elapsed = (Date.now() - pipelineStartTime) / 1000;
+    $('headerStatusText').textContent = `Running · ${formatTime(elapsed)}`;
+  }, 1000);
+
+  $('headerStatusText').textContent = 'Running...';
+  $('btnStart').disabled = true;
+  $('btnStart').textContent = 'Pipeline Running...';
+  $('btnStart').style.opacity = '0.5';
+  $('btnDemo').disabled = true;
+  $('btnDemo').style.opacity = '0.5';
+
+  setPipelineStep(2);
+  $('section-upload').className = 'section-visible';
+  $('section-upload').querySelector('.card').classList.remove('active-card');
+  $('section-upload').querySelector('.card-badge').className = 'card-badge badge-done';
+  $('section-upload').querySelector('.card-badge').textContent = 'Done';
+
+  $('section-openfigi').className = 'section-visible';
+}
+
+// ============================================================================
+// FILE UPLOAD — sends to FastAPI backend
+// ============================================================================
+const uploadZone = $('uploadZone');
+const fileInput = $('fileInput');
+
+uploadZone.addEventListener('click', () => fileInput.click());
+uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('dragover'); });
+uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
+uploadZone.addEventListener('drop', e => {
+  e.preventDefault();
+  uploadZone.classList.remove('dragover');
+  handleFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', e => { if (e.target.files[0]) handleFile(e.target.files[0]); });
+
+async function handleFile(file) {
+  uploadedFile = file;
+  $('fileName').textContent = file.name;
+  $('fileMeta').textContent = `${(file.size / 1024).toFixed(1)} KB · Parsing...`;
+  uploadZone.style.display = 'none';
+  $('fileInfoBox').style.display = 'block';
+  $('btnStart').disabled = true;
+  $('btnStart').textContent = 'Uploading...';
+  $('btnStart').style.opacity = '0.5';
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  try {
+    const resp = await fetch('/api/upload', { method: 'POST', body: formData });
+    const data = await resp.json();
+
+    if (data.error) {
+      $('fileMeta').textContent = `Error: ${data.error}`;
+      $('btnStart').textContent = 'Upload Failed';
+      return;
+    }
+
+    sessionId = data.session_id;
+    isinsCount = data.count;
+    $('fileMeta').textContent = `${(file.size / 1024).toFixed(1)} KB · ${data.count} ISINs detected · Sheet: ${data.sheet_name}`;
+    $('btnStart').disabled = false;
+    $('btnStart').textContent = 'Begin Enrichment Pipeline';
+    $('btnStart').style.opacity = '1';
+  } catch (err) {
+    $('fileMeta').textContent = `Connection error — is the server running? (python server.py)`;
+    $('btnStart').textContent = 'Server Unavailable';
+  }
+}
+
+// ============================================================================
+// PIPELINE — connects via WebSocket (real server mode)
+// ============================================================================
+async function startPipeline() {
+  if (!sessionId) return;
+  demoMode = false;
+  beginStep2();
+
+  const apiKey = $('apiKeyInput').value.trim() || null;
+
+  const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${wsProto}//${location.host}/ws/pipeline/${sessionId}`);
+
+  ws.onopen = () => {
+    addLog('openfigiLog', 'Connected to server', 'success');
+    ws.send(JSON.stringify({ action: 'start', api_key: apiKey }));
+  };
+
+  ws.onmessage = (evt) => {
+    const msg = JSON.parse(evt.data);
+    handleWSEvent(msg);
+  };
+
+  ws.onerror = () => { addLog('openfigiLog', 'WebSocket connection error', 'error'); };
+  ws.onclose = () => { addLog('openfigiLog', 'Connection closed', ''); };
+}
+
+// ============================================================================
+// WEBSOCKET EVENT HANDLER
+// ============================================================================
+function handleWSEvent(msg) {
+  switch (msg.event) {
+    case 'openfigi_start':   handleOpenFIGIStart(msg); break;
+    case 'openfigi_batch':   handleOpenFIGIBatch(msg); break;
+    case 'openfigi_complete':handleOpenFIGIComplete(msg); break;
+    case 'capiq_prompt':     handleCapIQPrompt(msg); break;
+    case 'capiq_populating': handleCapIQPopulating(msg); break;
+    case 'capiq_complete':   handleCapIQComplete(msg); break;
+    case 'capiq_skipped':    handleCapIQSkipped(msg); break;
+    case 'capiq_error':
+      addLog('capiqLog', `CIQ Error: ${msg.message}`, 'error');
+      handleCapIQSkipped(msg);
+      break;
+    case 'merge_complete':   handleMergeComplete(msg); break;
+    case 'error':            addLog('openfigiLog', `Error: ${msg.message}`, 'error'); break;
+  }
+}
+
+// ============================================================================
+// OPENFIGI HANDLERS
+// ============================================================================
+let totalISINsInPipeline = 0;
+
+function handleOpenFIGIStart(msg) {
+  totalISINsInPipeline = msg.total_isins;
+  updateISINProgress(0, totalISINsInPipeline, 0);
+
+  addLog('openfigiLog', 'OpenFIGI lookup started', 'info');
+  addLog('openfigiLog', `Processing ${msg.total_isins} ISINs in ${msg.total_batches} batches (size ${msg.batch_size})`, '');
+  addLog('openfigiLog', msg.has_api_key ? 'API key detected — higher rate limits' : 'No API key — conservative rate limits', msg.has_api_key ? 'success' : 'warn');
+}
+
+function handleOpenFIGIBatch(msg) {
+  const { batch, total_batches, progress_pct, elapsed_s, eta_s, results } = msg;
+
+  // Update batch progress bar
+  $('batchLabel').textContent = `Batch ${batch} / ${total_batches}`;
+  $('batchPct').textContent = `${progress_pct}%`;
+  $('batchProgress').style.width = `${progress_pct}%`;
+
+  // Update timers
+  $('elapsedTimer').textContent = formatTime(elapsed_s);
+  $('etaTimer').textContent = eta_s > 0 ? formatTime(eta_s) : '--:--';
+
+  // Accumulate results
+  results.forEach(r => {
+    const isMatch = r.Name && !r.Name.includes('ERROR') && r.Name !== 'No match found' && r.Name !== 'API call failed';
+    if (isMatch) isinsMatched++;
+  });
+  isinsProcessed += results.length;
+  allOpenFIGIResults.push(...results);
+
+  // Update ISIN progress bar
+  updateISINProgress(isinsProcessed, totalISINsInPipeline, isinsMatched);
+
+  addLog('openfigiLog', `✓ Batch ${batch}/${total_batches} — ${results.length} ISINs processed`, 'success');
+
+  if (batch < total_batches) {
+    addLog('openfigiLog', 'Rate limit pause...', 'warn');
+  }
+}
+
+function handleOpenFIGIComplete(msg) {
+  $('openfigiSpinner').style.display = 'none';
+  $('openfigiBadge').className = 'card-badge badge-done';
+  $('openfigiBadge').textContent = 'Complete';
+  $('batchProgress').classList.add('done');
+  $('isinProgress').classList.add('done');
+
+  $('elapsedTimer').textContent = formatTime(msg.elapsed_s);
+  $('etaTimer').textContent = '00:00';
+
+  const notFound = msg.not_found || 0;
+  const apiErrors = msg.api_errors || 0;
+
+  addLog('openfigiLog', `OpenFIGI complete: ${msg.matched}/${msg.total} matched in ${msg.elapsed_s}s`, 'success');
+  if (notFound > 0) addLog('openfigiLog', `${notFound} ISINs not in OpenFIGI database (valid ISINs, no coverage)`, 'warn');
+  if (apiErrors > 0) addLog('openfigiLog', `${apiErrors} API errors (network/timeout)`, 'error');
+
+  $('statMatched').textContent = msg.matched;
+  $('statNotFound').textContent = notFound;
+  $('statErrors').textContent = apiErrors;
+  $('statG10').textContent = msg.g10;
+  $('statEM').textContent = msg.em;
+  $('openfigiStats').style.display = 'block';
+  $('openfigiStats').style.animation = 'section-in 0.5s ease';
+
+  setPipelineStep(3);
+  $('section-capiq').className = 'section-visible';
+}
+
+// ============================================================================
+// CAPITAL IQ HANDLERS
+// ============================================================================
+function handleCapIQPrompt(msg) {
+  if (!msg.has_win32) {
+    addLog('capiqLog', 'pywin32 not available on this platform', 'warn');
+  }
+}
+
+function showCIQModal() {
+  $('ciqModal').classList.add('visible');
+}
+
+function skipCIQ() {
+  $('ciqModal').classList.remove('visible');
+  if (demoMode) {
+    handleCapIQSkipped({ reason: 'Capital IQ enrichment skipped (demo mode)' });
+    // In demo, trigger merge directly
+    demoMerge(false);
+  } else if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ action: 'capiq_skip' }));
+  }
+}
+
+function confirmCIQ() {
+  $('ciqModal').classList.remove('visible');
+  $('capiqWaiting').style.display = 'none';
+  $('capiqProcessing').style.display = 'block';
+  $('capiqSpinner').style.display = 'block';
+  $('capiqBadge').textContent = 'Processing';
+
+  if (demoMode) {
+    demoCIQProcess();
+  } else {
+    addLog('capiqLog', 'Requesting CIQ enrichment from server...', 'info');
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ action: 'capiq_confirm', template_path: 'ISIN Template.xlsx' }));
+    }
+  }
+}
+
+function handleCapIQPopulating(msg) {
+  addLog('capiqLog', `Populating ${msg.total} ISINs into template...`, 'info');
+  $('ciqProgressLabel').textContent = 'Populating ISINs...';
+  $('ciqProgressPct').textContent = '50%';
+  $('ciqProgress').style.width = '50%';
+}
+
+function handleCapIQComplete(msg) {
+  $('capiqSpinner').style.display = 'none';
+  $('capiqBadge').className = 'card-badge badge-done';
+  $('capiqBadge').textContent = 'Complete';
+  $('ciqProgress').style.width = '100%';
+  $('ciqProgressPct').textContent = '100%';
+  $('ciqProgress').classList.add('done');
+
+  addLog('capiqLog', `✓ CIQ enrichment complete — ${msg.rows} rows, ${msg.columns} columns`, 'success');
+
+  $('capiqResults').style.display = 'block';
+  $('capiqResults').style.animation = 'section-in 0.5s ease';
+  $('ciqSuccess').textContent = msg.rows;
+  $('ciqCols').textContent = msg.columns;
+  $('ciqRows').textContent = msg.rows;
+  $('ciqErrors').textContent = msg.errors || 0;
+}
+
+function handleCapIQSkipped(msg) {
+  $('capiqBadge').className = 'card-badge badge-pending';
+  $('capiqBadge').textContent = 'Skipped';
+  $('capiqSpinner').style.display = 'none';
+
+  const reason = msg.reason || 'Capital IQ enrichment skipped';
+  $('capiqWaiting').innerHTML = `<div style="text-align:center;padding:20px;font-family:var(--mono);font-size:12px;color:var(--text-muted)">${escapeHtml(reason)}</div>`;
+  $('capiqProcessing').style.display = 'none';
+  $('capiqWaiting').style.display = 'block';
+
+  addLog('capiqLog', reason, 'warn');
+}
+
+// ============================================================================
+// MERGE / RESULTS HANDLER
+// ============================================================================
+function handleMergeComplete(msg) {
+  setPipelineStep(4);
+  $('pStep4').classList.remove('active');
+  $('pStep4').classList.add('completed');
+
+  $('section-results').className = 'section-visible';
+
+  clearInterval(elapsedInterval);
+  const totalTime = Math.round((Date.now() - pipelineStartTime) / 1000);
+  $('headerStatusText').textContent = `Complete · ${formatTime(totalTime)}`;
+
+  // Export button
+  const exportBtn = $('section-results').querySelector('.btn-download');
+  if (exportBtn) {
+    if (demoMode) {
+      exportBtn.onclick = () => alert('Export is available when running with the server (python server.py)');
+    } else {
+      exportBtn.onclick = () => { window.location = `/api/export/${sessionId}`; };
+    }
+  }
+
+  // Build table
+  const head = $('resultsHead');
+  const body = $('resultsBody');
+  const columns = msg.columns;
+  const preview = msg.preview;
+
+  const displayCols = columns.filter(c =>
+    !['Composite_FIGI', 'Exchange_Code', 'Security_Description', 'Num_Matches'].includes(c)
+  );
+
+  head.innerHTML = '<tr>' + displayCols.map(c => `<th>${escapeHtml(c)}</th>`).join('') + '</tr>';
+
+  preview.forEach(row => {
+    const tr = document.createElement('tr');
+    let cells = '';
+
+    displayCols.forEach(col => {
+      let val = row[col] != null ? String(row[col]) : '';
+
+      if (col === 'Market') {
+        val = val === 'G10' ? '<span class="tag tag-g10">G10</span>'
+            : val === 'EM' ? '<span class="tag tag-em">EM</span>' : escapeHtml(val);
+      } else if (col === 'Asset_Class') {
+        val = val === 'Rate' ? '<span class="tag tag-rate">Rate</span>'
+            : val === 'Credit' ? '<span class="tag tag-credit">Credit</span>' : escapeHtml(val);
+      } else if (col === 'ISIN') {
+        val = `<span class="isin-cell">${escapeHtml(val)}</span>`;
+      } else {
+        val = escapeHtml(val);
+      }
+
+      cells += `<td>${val}</td>`;
+    });
+
+    tr.innerHTML = cells;
+    body.appendChild(tr);
+  });
+
+  // Summary charts
+  const rateCount = allOpenFIGIResults.filter(d => d.Asset_Class === 'Rate').length;
+  const creditCount = allOpenFIGIResults.filter(d => d.Asset_Class === 'Credit').length;
+  const g10Count = allOpenFIGIResults.filter(d => d.Market === 'G10').length;
+  const emCount = allOpenFIGIResults.filter(d => d.Market === 'EM').length;
+
+  $('chartAsset').innerHTML = `
+    <div class="bar-chart-row">
+      <span class="bar-label">Rate</span>
+      <div class="bar-track"><div class="bar-fill green" style="width:0%" id="barRate">${rateCount}</div></div>
+    </div>
+    <div class="bar-chart-row">
+      <span class="bar-label">Credit</span>
+      <div class="bar-track"><div class="bar-fill orange" style="width:0%" id="barCredit">${creditCount}</div></div>
+    </div>
+  `;
+
+  $('chartMarket').innerHTML = `
+    <div class="bar-chart-row">
+      <span class="bar-label">G10</span>
+      <div class="bar-track"><div class="bar-fill blue" style="width:0%" id="barG10">${g10Count}</div></div>
+    </div>
+    <div class="bar-chart-row">
+      <span class="bar-label">EM</span>
+      <div class="bar-track"><div class="bar-fill purple" style="width:0%" id="barEM">${emCount}</div></div>
+    </div>
+  `;
+
+  setTimeout(() => {
+    const total = allOpenFIGIResults.length || 1;
+    $('barRate').style.width = `${(rateCount / total) * 100}%`;
+    $('barCredit').style.width = `${(creditCount / total) * 100}%`;
+    $('barG10').style.width = `${(g10Count / total) * 100}%`;
+    $('barEM').style.width = `${(emCount / total) * 100}%`;
+  }, 100);
+
+  $('finalTotal').textContent = msg.total_rows;
+  $('finalEnriched').textContent = msg.total_rows;
+  $('finalColumns').textContent = msg.total_columns;
+  $('finalTime').textContent = `${totalTime}s`;
+
+  $('section-results').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+
+// ============================================================================
+// DEMO MODE — runs entirely in the browser with mock data
+// ============================================================================
+const DEMO_ISINS = [
+  'US912810TX63','US91282CJL63','DE0001102580','GB00BMBL1G81','FR0014007L00',
+  'JP1201551L44','CA135087N449','XS2586944278','IT0005518128','AU3TB0000275',
+  'US037833EZ88','US00206RMK58','XS2555188017','DE000A30VUM6','GB00BN65R313',
+  'US459058KH40','BR516527QM15','MX0MGO0001E8','ZAG000106998','TR0618TH0015',
+  'US06738EBR27','XS2449482812','US478160CV28','FR001400M077','NL0015001FS2',
+  'SE0017071521','CH0528220498','AT0000A2U543','IE00BFXR7G29','US298785JB49'
+];
+
+const DEMO_FIGI = [
+  { Name:'US Treasury 4.25% 2054', Ticker:'T 4.25 11/15/54', Security_Type:'Govt', Security_Type2:'Treasury', Market_Sector:'Govt', FIGI:'BBG01LGJPJN8', Asset_Class:'Rate', Market:'G10' },
+  { Name:'US Treasury 4.00% 2034', Ticker:'T 4 02/15/34', Security_Type:'Govt', Security_Type2:'Treasury', Market_Sector:'Govt', FIGI:'BBG01HMKZRL7', Asset_Class:'Rate', Market:'G10' },
+  { Name:'BUNDESREPUB. DEUTSCHLAND 2.3% 2033', Ticker:'DBR 2.3 02/15/33', Security_Type:'Govt', Security_Type2:'DOMESTIC', Market_Sector:'Govt', FIGI:'BBG01G85BMJ3', Asset_Class:'Rate', Market:'G10' },
+  { Name:'UK GILT 3.75% 2053', Ticker:'UKT 3.75 10/22/53', Security_Type:'Govt', Security_Type2:'Treasury', Market_Sector:'Govt', FIGI:'BBG01KFHK8W6', Asset_Class:'Rate', Market:'G10' },
+  { Name:'FRANCE OAT 3.0% 2033', Ticker:'FRTR 3 05/25/33', Security_Type:'Govt', Security_Type2:'DOMESTIC', Market_Sector:'Govt', FIGI:'BBG01GD7RYK1', Asset_Class:'Rate', Market:'G10' },
+  { Name:'JAPAN GOVT 0.8% 2033', Ticker:'JGB 0.8 09/20/33', Security_Type:'Govt', Security_Type2:'Sovereign', Market_Sector:'Govt', FIGI:'BBG01N54Y7L9', Asset_Class:'Rate', Market:'G10' },
+  { Name:'CANADA GOVT 3.5% 2033', Ticker:'CAN 3.5 03/01/33', Security_Type:'Govt', Security_Type2:'Sovereign', Market_Sector:'Govt', FIGI:'BBG01GXM39P8', Asset_Class:'Rate', Market:'G10' },
+  { Name:'VOLKSWAGEN INTL FIN 4.875% 2028', Ticker:'VW 4.875 01/15/28', Security_Type:'Corp', Security_Type2:'Corporate Bond', Market_Sector:'Corp', FIGI:'BBG01JZ5P4K0', Asset_Class:'Credit', Market:'G10' },
+  { Name:'ITALY BTP 4.35% 2033', Ticker:'BTPS 4.35 11/01/33', Security_Type:'Govt', Security_Type2:'DOMESTIC', Market_Sector:'Govt', FIGI:'BBG01KXWQ2N4', Asset_Class:'Rate', Market:'G10' },
+  { Name:'AUSTRALIA GOVT 3.0% 2033', Ticker:'ACGB 3 04/21/33', Security_Type:'Govt', Security_Type2:'Sovereign', Market_Sector:'Govt', FIGI:'BBG01F8TY7X5', Asset_Class:'Rate', Market:'G10' },
+  { Name:'APPLE INC 4.15% 2030', Ticker:'AAPL 4.15 08/01/30', Security_Type:'Corp', Security_Type2:'Corporate Bond', Market_Sector:'Corp', FIGI:'BBG01HKC1VL2', Asset_Class:'Credit', Market:'G10' },
+  { Name:'AT&T INC 3.5% 2029', Ticker:'T 3.5 06/15/29', Security_Type:'Corp', Security_Type2:'Corporate Bond', Market_Sector:'Corp', FIGI:'BBG00YVHX3P1', Asset_Class:'Credit', Market:'G10' },
+  { Name:'HSBC HOLDINGS 5.402% 2033', Ticker:'HSBC 5.402 08/11/33', Security_Type:'Corp', Security_Type2:'Corporate Bond', Market_Sector:'Corp', FIGI:'BBG01JK90ZH8', Asset_Class:'Credit', Market:'G10' },
+  { Name:'KFW 2.875% 2028', Ticker:'KFW 2.875 04/15/28', Security_Type:'Corp', Security_Type2:'Agency', Market_Sector:'Corp', FIGI:'BBG01HTM6BG7', Asset_Class:'Credit', Market:'G10' },
+  { Name:'UK GILT 4.5% 2034', Ticker:'UKT 4.5 06/07/34', Security_Type:'Govt', Security_Type2:'Treasury', Market_Sector:'Govt', FIGI:'BBG01NCPS2W9', Asset_Class:'Rate', Market:'G10' },
+  { Name:'IBRD 3.125% 2028', Ticker:'IBRD 3.125 06/15/28', Security_Type:'Corp', Security_Type2:'Supra-Natl', Market_Sector:'Corp', FIGI:'BBG01GMLFHN2', Asset_Class:'Credit', Market:'G10' },
+  { Name:'BRAZIL GOVT 10.0% 2029', Ticker:'BRAZIL 10 01/01/29', Security_Type:'Govt', Security_Type2:'Sovereign', Market_Sector:'Govt', FIGI:'BBG00K89DYM1', Asset_Class:'Rate', Market:'EM' },
+  { Name:'MEXICO MBONOS 7.75% 2031', Ticker:'MBONO 7.75 05/29/31', Security_Type:'Govt', Security_Type2:'Sovereign', Market_Sector:'Govt', FIGI:'BBG00YTH6X08', Asset_Class:'Rate', Market:'EM' },
+  { Name:'SOUTH AFRICA GOVT 8.875% 2035', Ticker:'SAGB 8.875 02/28/35', Security_Type:'Govt', Security_Type2:'Sovereign', Market_Sector:'Govt', FIGI:'BBG00P9HL1K3', Asset_Class:'Rate', Market:'EM' },
+  { Name:'TURKEY GOVT 12.4% 2028', Ticker:'TURKGB 12.4 03/01/28', Security_Type:'Govt', Security_Type2:'Sovereign', Market_Sector:'Govt', FIGI:'BBG01FM5K8J6', Asset_Class:'Rate', Market:'EM' },
+  { Name:'BARCLAYS PLC 5.746% 2033', Ticker:'BACR 5.746 08/09/33', Security_Type:'Corp', Security_Type2:'Corporate Bond', Market_Sector:'Corp', FIGI:'BBG01KQ8VTG7', Asset_Class:'Credit', Market:'G10' },
+  { Name:'MERCEDES-BENZ 4.5% 2029', Ticker:'MBG 4.5 09/15/29', Security_Type:'Corp', Security_Type2:'Corporate Bond', Market_Sector:'Corp', FIGI:'BBG01NX4PQR3', Asset_Class:'Credit', Market:'G10' },
+  { Name:'JOHNSON & JOHNSON 4.9% 2033', Ticker:'JNJ 4.9 06/01/33', Security_Type:'Corp', Security_Type2:'Corporate Bond', Market_Sector:'Corp', FIGI:'BBG01GY82HK4', Asset_Class:'Credit', Market:'G10' },
+  { Name:'FRANCE OAT 3.25% 2038', Ticker:'FRTR 3.25 05/25/38', Security_Type:'Govt', Security_Type2:'DOMESTIC', Market_Sector:'Govt', FIGI:'BBG01Q5RX8F2', Asset_Class:'Rate', Market:'G10' },
+  { Name:'NETHERLANDS GOVT 2.75% 2033', Ticker:'NETHER 2.75 01/15/33', Security_Type:'Govt', Security_Type2:'Sovereign', Market_Sector:'Govt', FIGI:'BBG01GMLFXX9', Asset_Class:'Rate', Market:'G10' },
+  { Name:'SWEDEN GOVT 1.375% 2031', Ticker:'SGB 1.375 09/12/31', Security_Type:'Govt', Security_Type2:'Sovereign', Market_Sector:'Govt', FIGI:'BBG01CM3N4Y5', Asset_Class:'Rate', Market:'G10' },
+  { Name:'SWISS CONFED 1.0% 2032', Ticker:'SWISS 1 06/22/32', Security_Type:'Govt', Security_Type2:'Sovereign', Market_Sector:'Govt', FIGI:'BBG01E98GKW8', Asset_Class:'Rate', Market:'G10' },
+  { Name:'AUSTRIA GOVT 3.15% 2034', Ticker:'RAGB 3.15 02/20/34', Security_Type:'Govt', Security_Type2:'Sovereign', Market_Sector:'Govt', FIGI:'BBG01PY83KH6', Asset_Class:'Rate', Market:'G10' },
+  { Name:'IRELAND GOVT 2.0% 2031', Ticker:'IRISH 2 02/18/31', Security_Type:'Govt', Security_Type2:'Sovereign', Market_Sector:'Govt', FIGI:'BBG01C22J9X4', Asset_Class:'Rate', Market:'G10' },
+  { Name:'JPMORGAN CHASE 5.04% 2033', Ticker:'JPM 5.04 01/23/33', Security_Type:'Corp', Security_Type2:'Corporate Bond', Market_Sector:'Corp', FIGI:'BBG01GH5KNY7', Asset_Class:'Credit', Market:'G10' },
+];
+
+const DEMO_CIQ = [
+  { Coupon:'4.250%', Maturity:'2054-11-15', Yield:'4.52%', Duration:'16.2', Rating:'AA+ / Aaa', Currency:'USD' },
+  { Coupon:'4.000%', Maturity:'2034-02-15', Yield:'4.15%', Duration:'8.1', Rating:'AA+ / Aaa', Currency:'USD' },
+  { Coupon:'2.300%', Maturity:'2033-02-15', Yield:'2.45%', Duration:'7.8', Rating:'AAA / Aaa', Currency:'EUR' },
+  { Coupon:'3.750%', Maturity:'2053-10-22', Yield:'4.15%', Duration:'18.9', Rating:'AA / Aa3', Currency:'GBP' },
+  { Coupon:'3.000%', Maturity:'2033-05-25', Yield:'3.08%', Duration:'7.5', Rating:'AA / Aa2', Currency:'EUR' },
+  { Coupon:'0.800%', Maturity:'2033-09-20', Yield:'0.95%', Duration:'8.7', Rating:'A+ / A1', Currency:'JPY' },
+  { Coupon:'3.500%', Maturity:'2033-03-01', Yield:'3.42%', Duration:'7.2', Rating:'AAA / Aaa', Currency:'CAD' },
+  { Coupon:'4.875%', Maturity:'2028-01-15', Yield:'4.22%', Duration:'3.5', Rating:'BBB+ / Baa1', Currency:'EUR' },
+  { Coupon:'4.350%', Maturity:'2033-11-01', Yield:'4.10%', Duration:'7.4', Rating:'BBB / Baa3', Currency:'EUR' },
+  { Coupon:'3.000%', Maturity:'2033-04-21', Yield:'3.85%', Duration:'7.6', Rating:'AAA / Aaa', Currency:'AUD' },
+  { Coupon:'4.150%', Maturity:'2030-08-01', Yield:'4.30%', Duration:'5.2', Rating:'AA+ / Aaa', Currency:'USD' },
+  { Coupon:'3.500%', Maturity:'2029-06-15', Yield:'4.80%', Duration:'4.3', Rating:'BBB / Baa2', Currency:'USD' },
+  { Coupon:'5.402%', Maturity:'2033-08-11', Yield:'5.15%', Duration:'6.4', Rating:'A- / A3', Currency:'USD' },
+  { Coupon:'2.875%', Maturity:'2028-04-15', Yield:'2.90%', Duration:'3.8', Rating:'AAA / Aaa', Currency:'EUR' },
+  { Coupon:'4.500%', Maturity:'2034-06-07', Yield:'4.30%', Duration:'8.0', Rating:'AA / Aa3', Currency:'GBP' },
+  { Coupon:'3.125%', Maturity:'2028-06-15', Yield:'3.05%', Duration:'3.6', Rating:'AAA / Aaa', Currency:'USD' },
+  { Coupon:'10.000%', Maturity:'2029-01-01', Yield:'12.50%', Duration:'3.4', Rating:'BB- / Ba2', Currency:'BRL' },
+  { Coupon:'7.750%', Maturity:'2031-05-29', Yield:'9.20%', Duration:'4.8', Rating:'BBB / Baa2', Currency:'MXN' },
+  { Coupon:'8.875%', Maturity:'2035-02-28', Yield:'10.30%', Duration:'6.1', Rating:'BB- / Ba2', Currency:'ZAR' },
+  { Coupon:'12.400%', Maturity:'2028-03-01', Yield:'28.50%', Duration:'2.1', Rating:'B / B3', Currency:'TRY' },
+  { Coupon:'5.746%', Maturity:'2033-08-09', Yield:'5.50%', Duration:'6.2', Rating:'A / A1', Currency:'USD' },
+  { Coupon:'4.500%', Maturity:'2029-09-15', Yield:'3.95%', Duration:'4.5', Rating:'A- / A3', Currency:'EUR' },
+  { Coupon:'4.900%', Maturity:'2033-06-01', Yield:'4.65%', Duration:'6.8', Rating:'AAA / Aaa', Currency:'USD' },
+  { Coupon:'3.250%', Maturity:'2038-05-25', Yield:'3.30%', Duration:'11.2', Rating:'AA / Aa2', Currency:'EUR' },
+  { Coupon:'2.750%', Maturity:'2033-01-15', Yield:'2.80%', Duration:'7.3', Rating:'AAA / Aaa', Currency:'EUR' },
+  { Coupon:'1.375%', Maturity:'2031-09-12', Yield:'2.10%', Duration:'6.5', Rating:'AAA / Aaa', Currency:'SEK' },
+  { Coupon:'1.000%', Maturity:'2032-06-22', Yield:'0.85%', Duration:'7.9', Rating:'AAA / Aaa', Currency:'CHF' },
+  { Coupon:'3.150%', Maturity:'2034-02-20', Yield:'3.05%', Duration:'8.2', Rating:'AA+ / Aa1', Currency:'EUR' },
+  { Coupon:'2.000%', Maturity:'2031-02-18', Yield:'2.35%', Duration:'6.0', Rating:'AA- / A1', Currency:'EUR' },
+  { Coupon:'5.040%', Maturity:'2033-01-23', Yield:'5.20%', Duration:'6.5', Rating:'A- / A2', Currency:'USD' },
+];
+
+async function startDemo() {
+  demoMode = true;
+
+  // Fake the upload section
+  uploadZone.style.display = 'none';
+  $('fileInfoBox').style.display = 'block';
+  $('fileName').textContent = 'demo_isins.xlsx';
+  $('fileMeta').textContent = `Demo · ${DEMO_ISINS.length} ISINs · Sample Data`;
+
+  beginStep2();
+
+  // ── Simulate OpenFIGI ──
+  const batchSize = 10;
+  const batches = [];
+  for (let i = 0; i < DEMO_ISINS.length; i += batchSize) {
+    batches.push(DEMO_FIGI.slice(i, i + batchSize));
+  }
+
+  totalISINsInPipeline = DEMO_ISINS.length;
+  updateISINProgress(0, totalISINsInPipeline, 0);
+
+  addLog('openfigiLog', 'Demo mode — using sample data', 'info');
+  addLog('openfigiLog', `Processing ${DEMO_ISINS.length} ISINs in ${batches.length} batches`, '');
+  addLog('openfigiLog', 'No API key — simulating conservative rate limits', 'warn');
+
+  const startTime = Date.now();
+
+  for (let b = 0; b < batches.length; b++) {
+    const batch = batches[b];
+    const pct = Math.round(((b + 1) / batches.length) * 100);
+
+    $('batchLabel').textContent = `Batch ${b + 1} / ${batches.length}`;
+    $('batchPct').textContent = `${pct}%`;
+    $('batchProgress').style.width = `${pct}%`;
+
+    const elapsed = (Date.now() - startTime) / 1000;
+    $('elapsedTimer').textContent = formatTime(elapsed);
+    if (b > 0) {
+      const eta = (elapsed / b) * (batches.length - b);
+      $('etaTimer').textContent = formatTime(eta);
+    }
+
+    addLog('openfigiLog', `Processing batch ${b + 1}/${batches.length} (${pct}%)`, '');
+
+    await sleep(1600);
+
+    batch.forEach(r => {
+      isinsProcessed++;
+      isinsMatched++;
+      allOpenFIGIResults.push({ ...r, ISIN: DEMO_ISINS[isinsProcessed - 1] });
+    });
+
+    updateISINProgress(isinsProcessed, totalISINsInPipeline, isinsMatched);
+    addLog('openfigiLog', `✓ Batch ${b + 1} complete — ${batch.length} ISINs resolved`, 'success');
+
+    if (b < batches.length - 1) {
+      addLog('openfigiLog', 'Rate limit pause (2.5s)...', 'warn');
+      await sleep(700);
+    }
+  }
+
+  // OpenFIGI done
+  $('openfigiSpinner').style.display = 'none';
+  $('openfigiBadge').className = 'card-badge badge-done';
+  $('openfigiBadge').textContent = 'Complete';
+  $('batchProgress').classList.add('done');
+  $('isinProgress').classList.add('done');
+
+  const totalElapsed = (Date.now() - startTime) / 1000;
+  $('elapsedTimer').textContent = formatTime(totalElapsed);
+  $('etaTimer').textContent = '00:00';
+
+  const matched = allOpenFIGIResults.length;
+  const g10 = allOpenFIGIResults.filter(r => r.Market === 'G10').length;
+  const em = allOpenFIGIResults.filter(r => r.Market === 'EM').length;
+
+  addLog('openfigiLog', `OpenFIGI complete: ${matched}/${DEMO_ISINS.length} matched in ${Math.round(totalElapsed)}s`, 'success');
+
+  $('statMatched').textContent = matched;
+  $('statErrors').textContent = 0;
+  $('statG10').textContent = g10;
+  $('statEM').textContent = em;
+  $('openfigiStats').style.display = 'block';
+  $('openfigiStats').style.animation = 'section-in 0.5s ease';
+
+  // Move to CIQ
+  setPipelineStep(3);
+  $('section-capiq').className = 'section-visible';
+}
+
+async function demoCIQProcess() {
+  const formulaNames = ['Coupon','Maturity','Yield','Duration','S&P / Moody','Currency'];
+  const grid = $('ciqFormulaGrid');
+
+  formulaNames.forEach(name => {
+    const div = document.createElement('div');
+    div.className = 'ciq-formula-status';
+    div.id = `ciq-f-${name.replace(/[^a-zA-Z]/g,'')}`;
+    div.innerHTML = `<span class="dot dot-loading"></span><span style="color:var(--text-muted)">${name}</span>`;
+    grid.appendChild(div);
+  });
+
+  addLog('capiqLog', 'Connected to Excel instance (demo)', 'success');
+  addLog('capiqLog', 'Found template: ISIN Template.xlsx', 'success');
+  await sleep(500);
+
+  addLog('capiqLog', `Populating ${DEMO_ISINS.length} ISINs into column A...`, 'info');
+  for (let i = 0; i <= 100; i += 12) {
+    $('ciqProgressPct').textContent = `${Math.min(i, 100)}%`;
+    $('ciqProgress').style.width = `${Math.min(i, 100)}%`;
+    await sleep(60);
+  }
+  addLog('capiqLog', `✓ Populated all ${DEMO_ISINS.length} ISINs`, 'success');
+  await sleep(300);
+
+  $('ciqProgressLabel').textContent = 'CIQ formulas calculating...';
+  $('ciqProgress').style.width = '0%';
+  $('ciqProgressPct').textContent = '0%';
+  addLog('capiqLog', 'Triggering CalculateFull()...', 'info');
+  await sleep(400);
+
+  for (let i = 0; i < formulaNames.length; i++) {
+    const name = formulaNames[i];
+    const id = `ciq-f-${name.replace(/[^a-zA-Z]/g,'')}`;
+    const pct = Math.round(((i + 1) / formulaNames.length) * 100);
+    $('ciqProgressPct').textContent = `${pct}%`;
+    $('ciqProgress').style.width = `${pct}%`;
+
+    addLog('capiqLog', `  ✓ ${name} loaded (${formulaNames.length - i - 1} remaining)`, '');
+
+    await sleep(500 + Math.random() * 300);
+
+    const el = $(id);
+    el.querySelector('.dot').className = 'dot dot-done';
+    el.querySelector('span:last-child').style.color = 'var(--accent-green)';
+  }
+
+  $('ciqProgress').classList.add('done');
+  addLog('capiqLog', '✓ All CIQ formulas loaded successfully', 'success');
+  await sleep(500);
+
+  $('capiqSpinner').style.display = 'none';
+  $('capiqBadge').className = 'card-badge badge-done';
+  $('capiqBadge').textContent = 'Complete';
+
+  $('capiqResults').style.display = 'block';
+  $('capiqResults').style.animation = 'section-in 0.5s ease';
+  $('ciqSuccess').textContent = DEMO_ISINS.length;
+  $('ciqCols').textContent = formulaNames.length;
+  $('ciqRows').textContent = DEMO_ISINS.length;
+  $('ciqErrors').textContent = '0';
+
+  await sleep(600);
+  setPipelineStep(4);
+  demoMerge(true);
+}
+
+function demoMerge(hasCIQ) {
+  const baseCols = ['ISIN','Name','Market','Asset_Class','Market_Sector','Security_Type2','FIGI'];
+  const ciqCols = hasCIQ ? ['Coupon','Maturity','Yield','Rating','Duration','Currency'] : [];
+  const allCols = [...baseCols, ...ciqCols];
+
+  const preview = DEMO_ISINS.map((isin, i) => {
+    const row = { ISIN: isin, ...DEMO_FIGI[i] };
+    if (hasCIQ) {
+      Object.assign(row, DEMO_CIQ[i]);
+    }
+    return row;
+  });
+
+  handleMergeComplete({
+    total_rows: DEMO_ISINS.length,
+    total_columns: allCols.length,
+    columns: allCols,
+    has_ciq: hasCIQ,
+    preview: preview,
+  });
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+# Force Windows line endings for batch files
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Shell scripts get Unix line endings
+*.sh text eol=lf

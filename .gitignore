@@ -1,0 +1,78 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
+dist/
+build/
+*.whl
+
+# Virtual environment
+.venv/
+venv/
+env/
+ENV/
+
+# Jupyter / IPython
+.ipynb_checkpoints/
+
+# Distribution / packaging
+.eggs/
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+nosetests.xml
+coverage.xml
+*.cover
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.idea/
+# .vscode/ is tracked — contains important CRLF settings for .bat files
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Windows temp
+$RECYCLE.BIN/
+
+# App-specific
+*.zip
+ISIN IDS.xlsx
+ISIN Template.xlsx
+test ISIN.csv
+output/
+outputs/
+*_output.xlsx
+*_enriched.xlsx
+
+# Secrets / env files
+.env
+.env.*
+*.secret
+config.secret.*
+
+# Temp pip output
+pip_out.txt
+
+# Compiled Python
+*.pyc
