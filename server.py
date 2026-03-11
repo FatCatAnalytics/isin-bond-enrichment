@@ -298,6 +298,8 @@ async def run_capiq_phase(websocket: WebSocket, session: Session):
                     "reason": "CIQ enrichment returned no results",
                 })
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             await websocket.send_json({
                 "event": "capiq_error",
                 "message": str(e),

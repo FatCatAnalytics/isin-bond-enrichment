@@ -1625,7 +1625,7 @@ function handleWSEvent(msg) {
     case 'capiq_skipped':    handleCapIQSkipped(msg); break;
     case 'capiq_error':
       addLog('capiqLog', `CIQ Error: ${msg.message}`, 'error');
-      handleCapIQSkipped(msg);
+      handleCapIQSkipped({ reason: msg.message });
       break;
     case 'merge_complete':   handleMergeComplete(msg); break;
     case 'error':            addLog('openfigiLog', `Error: ${msg.message}`, 'error'); break;

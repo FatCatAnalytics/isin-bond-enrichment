@@ -313,8 +313,7 @@ def run_capiq_enrichment(isins: List[str], template_path: str, output_path: str,
     """
 
     if not HAS_WIN32:
-        print("ERROR: pywin32 not installed - cannot run Capital IQ enrichment")
-        return None
+        raise RuntimeError("pywin32 not installed - cannot run Capital IQ enrichment")
 
     print("\n" + "=" * 60)
     print("STEP 2: Capital IQ Enrichment")
@@ -359,7 +358,7 @@ def run_capiq_enrichment(isins: List[str], template_path: str, output_path: str,
 
         if excel is None:
             print("ERROR: Could not connect to Excel. Make sure Excel is open.")
-            return None
+            raise RuntimeError("Could not connect to Excel. Make sure Excel is running and the template is open.")
 
         # Find the template workbook
         template_name = os.path.basename(template_path)
@@ -372,11 +371,10 @@ def run_capiq_enrichment(isins: List[str], template_path: str, output_path: str,
                 break
 
         if wb is None:
+            open_names = [workbook.Name for workbook in excel.Workbooks]
             print(f"ERROR: Could not find '{template_name}' in open workbooks.")
-            print("Open workbooks:")
-            for workbook in excel.Workbooks:
-                print(f"  - {workbook.Name}")
-            return None
+            print("Open workbooks:", open_names)
+            raise RuntimeError(f"Could not find '{template_name}' in open Excel workbooks. Open workbooks: {open_names}")
 
         ws = wb.ActiveSheet
 
@@ -396,7 +394,7 @@ def run_capiq_enrichment(isins: List[str], template_path: str, output_path: str,
 
         if not formula_cols:
             print("WARNING: No formulas found in template row 2!")
-            return None
+            raise RuntimeError("No CIQ formulas found in row 2 of the template. Make sure the template has formulas in row 2.")
 
         last_col = max(formula_cols)
 
