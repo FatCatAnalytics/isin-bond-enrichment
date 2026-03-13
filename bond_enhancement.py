@@ -57,8 +57,16 @@ G10_COUNTRIES = {
 # Market sectors that indicate government/sovereign bonds
 GOVT_SECTORS = {'Govt', 'Muni'}
 
+# Market sectors that indicate corporate bonds (Credit)
+CORP_SECTORS = {'Corp'}
+
 # Security types that typically indicate government bonds
 GOVT_SECURITY_TYPES = {'DOMESTIC', 'Govt', 'T-Bill', 'Treasury', 'Sovereign'}
+
+# Corporate security-type keywords that should NOT be treated as government
+# even if they contain a government indicator (e.g. "DOMESTIC MTN")
+CORP_SECURITY_KEYWORDS = {'MTN', 'MEDIUM TERM NOTE', 'CORPORATE', 'DEBENTURE',
+                          'CONVERTIBLE', 'HIGH YIELD', 'COVERED'}
 
 
 # ============================================================================
@@ -81,15 +89,35 @@ def classify_market(isin: str) -> str:
 def classify_asset_class(market_sector: str, security_type: str, security_type2: str) -> str:
     """
     Classify as Rate or Credit based on market sector and security type.
-    Rate = Government bonds (sovereign, treasury, muni)
+    Rate  = Government bonds (sovereign, treasury, muni)
     Credit = Corporate bonds, structured products, etc.
+
+    Priority order:
+      1. Market sector 'Govt' / 'Muni'  → Rate
+      2. Market sector 'Corp'           → Credit  (even if securityType
+         contains a word like DOMESTIC, e.g. "DOMESTIC MTN")
+      3. Check securityType / securityType2 for government indicators,
+         but only when no corporate keyword is present in the same field
+      4. Default                         → Credit
     """
+    # 1. Definitive government sectors
     if market_sector in GOVT_SECTORS:
         return 'Rate'
 
+    # 2. Definitive corporate sector — skip security-type heuristics
+    if market_sector in CORP_SECTORS:
+        return 'Credit'
+
+    # 3. Heuristic: look for government indicators in security types,
+    #    but exclude when a corporate keyword is also present
     for sec_type in [security_type, security_type2]:
         if sec_type:
             sec_type_upper = sec_type.upper()
+
+            # If the security type contains a corporate keyword, treat as Credit
+            if any(kw in sec_type_upper for kw in CORP_SECURITY_KEYWORDS):
+                return 'Credit'
+
             for govt_indicator in GOVT_SECURITY_TYPES:
                 if govt_indicator.upper() in sec_type_upper:
                     return 'Rate'
