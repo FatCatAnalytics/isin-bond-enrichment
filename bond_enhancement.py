@@ -60,8 +60,18 @@ GOVT_SECTORS = {'Govt', 'Muni'}
 # Market sectors that indicate corporate bonds (Credit)
 CORP_SECTORS = {'Corp'}
 
+# Market sectors requiring sub-classification (agency vs non-agency)
+MTGE_SECTORS = {'Mtge'}
+
 # Security types that typically indicate government bonds
 GOVT_SECURITY_TYPES = {'DOMESTIC', 'Govt', 'T-Bill', 'Treasury', 'Sovereign'}
+
+# Agency MBS keywords — these are government-backed → Rate
+AGENCY_MBS_KEYWORDS = {
+    'FNMA', 'FHLMC', 'GNMA', 'FANNIE', 'FREDDIE', 'GINNIE',
+    'FEDERAL HOME', 'FEDERAL NATIONAL', 'GOVERNMENT NATIONAL',
+    'FHA', 'VA POOL', 'AGENCY', 'TBA',
+}
 
 # Corporate security-type keywords that should NOT be treated as government
 # even if they contain a government indicator (e.g. "DOMESTIC MTN")
@@ -86,19 +96,20 @@ def classify_market(isin: str) -> str:
     return 'G10' if country in G10_COUNTRIES else 'EM'
 
 
-def classify_asset_class(market_sector: str, security_type: str, security_type2: str) -> str:
+def classify_asset_class(market_sector: str, security_type: str, security_type2: str,
+                         name: str = '') -> str:
     """
     Classify as Rate or Credit based on market sector and security type.
-    Rate  = Government bonds (sovereign, treasury, muni)
-    Credit = Corporate bonds, structured products, etc.
+    Rate  = Government bonds (sovereign, treasury, muni, agency MBS)
+    Credit = Corporate bonds, structured products, non-agency MBS, etc.
 
     Priority order:
       1. Market sector 'Govt' / 'Muni'  → Rate
-      2. Market sector 'Corp'           → Credit  (even if securityType
-         contains a word like DOMESTIC, e.g. "DOMESTIC MTN")
-      3. Check securityType / securityType2 for government indicators,
+      2. Market sector 'Corp'           → Credit
+      3. Market sector 'Mtge'           → Rate if agency MBS, else Credit
+      4. Check securityType / securityType2 for government indicators,
          but only when no corporate keyword is present in the same field
-      4. Default                         → Credit
+      5. Default                         → Credit
     """
     # 1. Definitive government sectors
     if market_sector in GOVT_SECTORS:
@@ -108,7 +119,15 @@ def classify_asset_class(market_sector: str, security_type: str, security_type2:
     if market_sector in CORP_SECTORS:
         return 'Credit'
 
-    # 3. Heuristic: look for government indicators in security types,
+    # 3. Mortgage sector — sub-classify as agency (Rate) or non-agency (Credit)
+    if market_sector in MTGE_SECTORS:
+        # Check all available text fields for agency indicators
+        combined = ' '.join(filter(None, [security_type, security_type2, name])).upper()
+        if any(kw in combined for kw in AGENCY_MBS_KEYWORDS):
+            return 'Rate'
+        return 'Credit'
+
+    # 4. Heuristic: look for government indicators in security types,
     #    but exclude when a corporate keyword is also present
     for sec_type in [security_type, security_type2]:
         if sec_type:
@@ -184,9 +203,10 @@ def process_openfigi_response(isin: str, result: Dict) -> Dict:
         market_sector = match.get('marketSector', '')
         security_type = match.get('securityType', '')
         security_type2 = match.get('securityType2', '')
+        bond_name = match.get('name', '')
         return {
             'ISIN': isin,
-            'Name': match.get('name', ''),
+            'Name': bond_name,
             'Ticker': match.get('ticker', ''),
             'Security_Type': security_type,
             'Security_Type2': security_type2,
@@ -196,7 +216,7 @@ def process_openfigi_response(isin: str, result: Dict) -> Dict:
             'Composite_FIGI': match.get('compositeFIGI', '') or '',
             'Security_Description': match.get('securityDescription', ''),
             'Num_Matches': len(result['data']),
-            'Asset_Class': classify_asset_class(market_sector, security_type, security_type2),
+            'Asset_Class': classify_asset_class(market_sector, security_type, security_type2, bond_name),
             'Market': classify_market(isin),
         }
     elif 'error' in result:
@@ -283,46 +303,97 @@ def get_existing_excel():
         return None, False
 
 
-def wait_for_ciq_formulas(ws, data_start_row, data_end_row, formula_col, timeout=300, check_interval=10):
-    """Wait for CIQ formulas to calculate."""
-    print(f"Waiting for CIQ formulas to calculate (timeout: {timeout}s)...")
+def _is_cell_pending(val_text: str) -> bool:
+    """Check if a cell value indicates a CIQ formula is still loading."""
+    if not val_text:
+        return False
+    upper = val_text.upper().strip()
+    return any(indicator in upper for indicator in (
+        "#REQUESTING", "#GETTING", "#FETCHING", "#LOADING",
+        "#CALCULATING", "#PENDING", "#WAIT",
+    ))
+
+
+def wait_for_ciq_formulas(ws, data_start_row, data_end_row, formula_cols,
+                          timeout=600, check_interval=10):
+    """
+    Wait for ALL CIQ formulas to finish calculating across ALL rows and
+    ALL formula columns.
+
+    Args:
+        ws: Excel worksheet COM object
+        data_start_row: First data row (inclusive)
+        data_end_row: Last data row (inclusive)
+        formula_cols: List of column numbers that contain CIQ formulas
+                      (accepts a single int for backwards compatibility)
+        timeout: Max seconds to wait (default 600 = 10 min)
+        check_interval: Seconds between checks
+    """
+    # Accept a single column for backwards compatibility
+    if isinstance(formula_cols, int):
+        formula_cols = [formula_cols]
+
+    total_rows = data_end_row - data_start_row + 1
+    total_cells = total_rows * len(formula_cols)
+    print(f"Waiting for CIQ formulas to calculate...")
+    print(f"  Monitoring {total_rows} rows × {len(formula_cols)} formula columns = {total_cells} cells")
+    print(f"  Timeout: {timeout}s")
 
     start_time = time.time()
 
     while time.time() - start_time < timeout:
-        requesting = 0
+        pending = 0
         errors = 0
         success = 0
+        empty = 0
+        pending_locations = []  # Track a few examples for logging
 
-        # Check first 50 rows
-        for row in range(data_start_row, min(data_end_row + 1, data_start_row + 50)):
-            try:
-                val = str(ws.Cells(row, formula_col).Text or "")
+        # Scan ALL rows and ALL formula columns
+        for row in range(data_start_row, data_end_row + 1):
+            for col in formula_cols:
+                try:
+                    val = str(ws.Cells(row, col).Text or "")
 
-                if "#REQUESTING" in val.upper() or "#GETTING" in val.upper():
-                    requesting += 1
-                elif val.startswith("#"):
-                    errors += 1
-                elif val:
-                    success += 1
-            except:
-                pass
+                    if _is_cell_pending(val):
+                        pending += 1
+                        if len(pending_locations) < 5:  # Keep first 5 examples
+                            col_letter = chr(ord('A') + col - 1) if col <= 26 else f"Col{col}"
+                            pending_locations.append(f"{col_letter}{row}")
+                    elif val.startswith("#"):
+                        errors += 1
+                    elif val.strip():
+                        success += 1
+                    else:
+                        empty += 1
+                except Exception:
+                    pass
 
         elapsed = int(time.time() - start_time)
-        print(f"  {elapsed:3d}s: ✓ Success={success}, ⏳ Loading={requesting}, ✗ Errors={errors}")
+        done = success + errors
+        pct = round(done / total_cells * 100) if total_cells > 0 else 0
 
-        if requesting == 0 and (success > 0 or errors > 0):
-            print("✓ Formulas finished calculating!")
+        status_line = (f"  {elapsed:3d}s: ✓ Done={done} ({pct}%), "
+                       f"⏳ Pending={pending}, ✗ Errors={errors}, ○ Empty={empty}")
+        if pending_locations:
+            status_line += f"  [e.g. {', '.join(pending_locations)}]"
+        print(status_line)
+
+        if pending == 0 and (success > 0 or errors > 0):
+            print(f"✓ All formulas finished calculating! ({done}/{total_cells} cells resolved)")
             return True
 
+        # Trigger recalculation to nudge any stalled formulas
         try:
             ws.Calculate()
-        except:
+        except Exception:
             pass
 
         time.sleep(check_interval)
 
-    print(f"⚠ Timeout after {timeout}s")
+    # Timeout reached — report what's still pending
+    print(f"⚠ Timeout after {timeout}s — {pending} cells still pending")
+    if pending_locations:
+        print(f"  Still pending at: {', '.join(pending_locations)}")
     return False
 
 
@@ -457,14 +528,23 @@ def run_capiq_enrichment(isins: List[str], template_path: str, output_path: str,
         print("\nTriggering calculation...")
         excel.CalculateFull()
 
-        # Wait for formulas
+        # Wait for formulas — pass ALL formula columns so every cell is monitored
         data_end_row = template_row + len(isins) - 1
-        wait_for_ciq_formulas(ws, template_row, data_end_row, formula_cols[0], timeout=300)
+        formulas_done = wait_for_ciq_formulas(
+            ws, template_row, data_end_row, formula_cols, timeout=600
+        )
 
-        # Final calculation
+        # Final calculation pass + extra settle time
         print("Final calculation pass...")
         excel.CalculateFull()
-        time.sleep(5)
+        time.sleep(10)
+
+        # If first wait timed out, do one more check after the extra settle
+        if not formulas_done:
+            print("Running additional wait after final calculation...")
+            formulas_done = wait_for_ciq_formulas(
+                ws, template_row, data_end_row, formula_cols, timeout=120
+            )
 
         # Read results back into DataFrame
         print("Reading results...")
@@ -485,6 +565,35 @@ def run_capiq_enrichment(isins: List[str], template_path: str, output_path: str,
             data.append(row_data)
 
         ciq_df = pd.DataFrame(data)
+
+        # ── Post-read validation: detect any cells still showing pending ──
+        pending_cells = 0
+        pending_examples = []
+        for idx, row_data in enumerate(data):
+            for col_name, val in row_data.items():
+                if val and _is_cell_pending(str(val)):
+                    pending_cells += 1
+                    if len(pending_examples) < 10:
+                        isin_val = row_data.get(headers[0], f"row {idx + template_row}")
+                        pending_examples.append(f"{col_name} @ ISIN {isin_val}")
+
+        if pending_cells > 0:
+            print(f"\n⚠ WARNING: {pending_cells} cells still have pending/loading values!")
+            print(f"  These cells were read before CIQ finished calculating.")
+            for ex in pending_examples:
+                print(f"    • {ex}")
+            print(f"  Consider re-running with a longer timeout or fewer ISINs per batch.")
+
+            # Replace pending values with empty string so they don't pollute output
+            for col in ciq_df.columns:
+                mask = ciq_df[col].apply(
+                    lambda v: _is_cell_pending(str(v)) if pd.notna(v) else False
+                )
+                if mask.any():
+                    ciq_df.loc[mask, col] = None
+            print(f"  → Replaced {pending_cells} pending cells with blank values in output.")
+        else:
+            print(f"✓ Post-read validation passed — no pending cells detected.")
 
         # Save CIQ results
         ciq_df.to_excel(output_path, index=False)
