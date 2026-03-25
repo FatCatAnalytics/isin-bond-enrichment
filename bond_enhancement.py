@@ -546,9 +546,14 @@ def run_capiq_enrichment(isins: List[str], template_path: str, output_path: str,
         else:
             headers = [str(header_vals) if header_vals else "Column_1"]
 
+        # Save template row formulas before we start (so we can restore per batch)
+        template_formulas = []
+        for col_num in range(1, last_col + 1):
+            template_formulas.append(ws.Cells(template_row, col_num).Formula)
+
         # ── BATCHED PROCESSING ──
         # Split ISINs into batches to avoid overwhelming the CIQ add-in.
-        # Each batch: clear → populate → calculate → wait → read → next batch
+        # Each batch: clear → restore template → populate → calculate → wait → read → next batch
         isin_batches = list(chunk_list(isins, batch_size))
         total_batches = len(isin_batches)
         all_batch_data = []
@@ -564,13 +569,19 @@ def run_capiq_enrichment(isins: List[str], template_path: str, output_path: str,
             batch_len = len(batch_isins)
             print(f"\n── Batch {batch_num}/{total_batches} ({batch_len} ISINs) ──")
 
-            # Clear existing data below header row
+            # Clear existing data (template row AND below) to start fresh
             used_rows = ws.UsedRange.Rows.Count
-            if used_rows > header_row:
+            if used_rows >= template_row:
                 ws.Range(
-                    ws.Cells(header_row + 1, 1),
-                    ws.Cells(max(used_rows, header_row + 1), last_col)
+                    ws.Cells(template_row, 1),
+                    ws.Cells(max(used_rows, template_row), last_col)
                 ).Clear()
+
+            # Restore template row formulas (they were cleared above)
+            for col_num in range(1, last_col + 1):
+                formula = template_formulas[col_num - 1]
+                if formula and str(formula).startswith('='):
+                    ws.Cells(template_row, col_num).Formula = formula
 
             # Populate template formulas + ISINs with screen updating off
             excel.ScreenUpdating = False
