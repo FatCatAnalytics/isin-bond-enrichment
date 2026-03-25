@@ -1846,11 +1846,12 @@ function handleMergeComplete(msg) {
     body.appendChild(tr);
   });
 
-  // Summary charts
-  const rateCount = allOpenFIGIResults.filter(d => d.Asset_Class === 'Rate').length;
-  const creditCount = allOpenFIGIResults.filter(d => d.Asset_Class === 'Credit').length;
-  const g10Count = allOpenFIGIResults.filter(d => d.Market === 'G10').length;
-  const emCount = allOpenFIGIResults.filter(d => d.Market === 'EM').length;
+  // Summary charts — use server-provided counts (real mode) or filter preview/allOpenFIGIResults (demo mode)
+  const rateCount = msg.rate_count != null ? msg.rate_count : allOpenFIGIResults.filter(d => d.Asset_Class === 'Rate').length;
+  const creditCount = msg.credit_count != null ? msg.credit_count : allOpenFIGIResults.filter(d => d.Asset_Class === 'Credit').length;
+  const g10Count = msg.g10_count != null ? msg.g10_count : allOpenFIGIResults.filter(d => d.Market === 'G10').length;
+  const emCount = msg.em_count != null ? msg.em_count : allOpenFIGIResults.filter(d => d.Market === 'EM').length;
+  const total = rateCount + creditCount || 1;
 
   $('chartAsset').innerHTML = `
     <div class="bar-chart-row">
@@ -1875,11 +1876,11 @@ function handleMergeComplete(msg) {
   `;
 
   setTimeout(() => {
-    const total = allOpenFIGIResults.length || 1;
-    $('barRate').style.width = `${(rateCount / total) * 100}%`;
-    $('barCredit').style.width = `${(creditCount / total) * 100}%`;
-    $('barG10').style.width = `${(g10Count / total) * 100}%`;
-    $('barEM').style.width = `${(emCount / total) * 100}%`;
+    const barTotal = msg.total_rows || total;
+    $('barRate').style.width = `${(rateCount / barTotal) * 100}%`;
+    $('barCredit').style.width = `${(creditCount / barTotal) * 100}%`;
+    $('barG10').style.width = `${(g10Count / barTotal) * 100}%`;
+    $('barEM').style.width = `${(emCount / barTotal) * 100}%`;
   }, 100);
 
   $('finalTotal').textContent = msg.total_rows;

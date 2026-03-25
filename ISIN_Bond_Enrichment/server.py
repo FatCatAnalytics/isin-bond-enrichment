@@ -27,6 +27,7 @@ from bond_enhancement import (
     lookup_isins_openfigi,
     process_openfigi_response,
     classify_market,
+    apply_classifications,
     HAS_WIN32,
 )
 
@@ -340,6 +341,16 @@ async def run_merge_phase(websocket: WebSocket, session: Session):
 
     session.final_df = final_df
 
+    # Apply classifications (Asset_Class + Market) using CIQ data if available
+    final_df = apply_classifications(final_df)
+    session.final_df = final_df
+
+    # Compute classification counts
+    rate_count = int((final_df.get('Asset_Class', pd.Series()) == 'Rate').sum())
+    credit_count = int((final_df.get('Asset_Class', pd.Series()) == 'Credit').sum())
+    g10_count = int((final_df.get('Market', pd.Series()) == 'G10').sum())
+    em_count = int((final_df.get('Market', pd.Series()) == 'EM').sum())
+
     # Convert to JSON-safe preview
     preview = final_df.head(100).fillna("").to_dict(orient="records")
 
@@ -350,6 +361,10 @@ async def run_merge_phase(websocket: WebSocket, session: Session):
         "columns": list(final_df.columns),
         "has_ciq": has_ciq,
         "preview": preview,
+        "rate_count": rate_count,
+        "credit_count": credit_count,
+        "g10_count": g10_count,
+        "em_count": em_count,
     })
 
 

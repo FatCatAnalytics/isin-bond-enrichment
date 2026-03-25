@@ -8,7 +8,8 @@ Workflow:
     2. Prompt user to open Excel with CIQ template (add-in needs to load)
     3. Populate ISINs into CIQ template and wait for formulas
     4. Merge CIQ results with OpenFIGI data
-    5. Output final enriched dataset
+    5. Apply Asset_Class and Market classifications based on merged data
+    6. Output final enriched dataset
 
 Usage:
     python bond_enrichment.py input.xlsx output.xlsx --template ciq_template.xlsx
@@ -48,10 +49,15 @@ except ImportError:
 
 OPENFIGI_URL = "https://api.openfigi.com/v3/mapping"
 
-# G10 countries (by ISIN country prefix)
+# G10 countries (by ISIN country prefix AND Capital IQ Country of Issuance)
 G10_COUNTRIES = {
     'US', 'GB', 'DE', 'FR', 'IT', 'JP', 'CA', 'BE', 'NL', 'SE', 'CH',
     'AU', 'AT', 'ES', 'IE', 'FI', 'PT', 'DK', 'NO', 'NZ', 'LU', 'XS',
+    # Add full country names for Capital IQ matching
+    'USA', 'UNITED KINGDOM', 'GERMANY', 'FRANCE', 'ITALY', 'JAPAN',
+    'CANADA', 'BELGIUM', 'NETHERLANDS', 'SWEDEN', 'SWITZERLAND', 'AUSTRALIA',
+    'AUSTRIA', 'SPAIN', 'IRELAND', 'FINLAND', 'PORTUGAL', 'DENMARK', 'NORWAY',
+    'NEW ZEALAND', 'LUXEMBOURG', 'GREECE'
 }
 
 # Market sectors that indicate government/sovereign bonds
@@ -60,18 +66,8 @@ GOVT_SECTORS = {'Govt', 'Muni'}
 # Market sectors that indicate corporate bonds (Credit)
 CORP_SECTORS = {'Corp'}
 
-# Market sectors requiring sub-classification (agency vs non-agency)
-MTGE_SECTORS = {'Mtge'}
-
 # Security types that typically indicate government bonds
 GOVT_SECURITY_TYPES = {'DOMESTIC', 'Govt', 'T-Bill', 'Treasury', 'Sovereign'}
-
-# Agency MBS keywords — these are government-backed → Rate
-AGENCY_MBS_KEYWORDS = {
-    'FNMA', 'FHLMC', 'GNMA', 'FANNIE', 'FREDDIE', 'GINNIE',
-    'FEDERAL HOME', 'FEDERAL NATIONAL', 'GOVERNMENT NATIONAL',
-    'FHA', 'VA POOL', 'AGENCY', 'TBA',
-}
 
 # Corporate security-type keywords that should NOT be treated as government
 # even if they contain a government indicator (e.g. "DOMESTIC MTN")
@@ -90,26 +86,117 @@ def get_country_from_isin(isin: str) -> str:
     return ''
 
 
+def classify_market_from_ciq(country_of_issuance: str, isin: str = '') -> str:
+    """
+    Classify market as G10 or EM using Capital IQ Country of Issuance first,
+    then fallback to ISIN country prefix.
+    """
+    # Primary: Use Capital IQ Country of Issuance
+    if country_of_issuance and not pd.isna(country_of_issuance):
+        country_upper = str(country_of_issuance).upper().strip()
+        if country_upper in G10_COUNTRIES:
+            return 'G10'
+        else:
+            return 'EM'
+
+    # Fallback: Use ISIN country prefix
+    if isin:
+        country_code = get_country_from_isin(isin)
+        return classify_market(country_code)
+
+    return 'EM'  # Default
+
+
 def classify_market(isin: str) -> str:
-    """Classify as G10 or EM based on ISIN country code."""
+    """Classify as G10 or EM based on ISIN country code (fallback method)."""
     country = get_country_from_isin(isin)
     return 'G10' if country in G10_COUNTRIES else 'EM'
 
 
-def classify_asset_class(market_sector: str, security_type: str, security_type2: str,
-                         name: str = '') -> str:
+def classify_asset_class_ciq(security_type: str, market_sector: str = '', security_type2: str = '') -> str:
+    """
+    Classify as Rate or Credit based on Capital IQ Security Type values.
+
+    Capital IQ Security Type Classification:
+    Rate (Government bonds):
+      - Sovereign Bond
+      - Supranational Bond
+      - Supranational Note
+
+    Credit (Corporate bonds):
+      - Corporate Note
+      - Corporate Bond
+      - Corporate Money Market Instrument
+      - Corporate Convertible
+
+    Args:
+        security_type: Capital IQ Security Type (primary classification source)
+        market_sector: OpenFIGI Market Sector (fallback)
+        security_type2: OpenFIGI Security Type 2 (fallback)
+
+    Returns:
+        'Rate' for government/sovereign bonds, 'Credit' for corporate bonds
+    """
+    if not security_type or pd.isna(security_type):
+        # Fallback to OpenFIGI data if no CIQ Security Type
+        if market_sector in GOVT_SECTORS:
+            return 'Rate'
+        elif market_sector in CORP_SECTORS:
+            return 'Credit'
+        else:
+            return 'Credit'  # Default
+
+    security_type_clean = str(security_type).strip().upper()
+
+    # Rate (Government/Sovereign) Classification
+    rate_types = {
+        'SOVEREIGN BOND',
+        'SUPRANATIONAL BOND',
+        'SUPRANATIONAL NOTE'
+    }
+
+    if security_type_clean in rate_types:
+        return 'Rate'
+
+    # Credit (Corporate) Classification
+    credit_types = {
+        'CORPORATE NOTE',
+        'CORPORATE BOND',
+        'CORPORATE MONEY MARKET INSTRUMENT',
+        'CORPORATE CONVERTIBLE'
+    }
+
+    if security_type_clean in credit_types:
+        return 'Credit'
+
+    # If exact match not found, check for key words
+    if 'SOVEREIGN' in security_type_clean or 'SUPRANATIONAL' in security_type_clean:
+        return 'Rate'
+    elif 'CORPORATE' in security_type_clean:
+        return 'Credit'
+
+    # Final fallback to OpenFIGI data
+    if market_sector in GOVT_SECTORS:
+        return 'Rate'
+    elif market_sector in CORP_SECTORS:
+        return 'Credit'
+
+    return 'Credit'  # Default to Credit if uncertain
+
+
+def classify_asset_class(market_sector: str, security_type: str, security_type2: str) -> str:
     """
     Classify as Rate or Credit based on market sector and security type.
-    Rate  = Government bonds (sovereign, treasury, muni, agency MBS)
-    Credit = Corporate bonds, structured products, non-agency MBS, etc.
+    Rate  = Government bonds (sovereign, treasury, muni)
+    Credit = Corporate bonds, structured products, etc.
 
     Priority order:
       1. Market sector 'Govt' / 'Muni'  → Rate
-      2. Market sector 'Corp'           → Credit
-      3. Market sector 'Mtge'           → Rate if agency MBS, else Credit
-      4. Check securityType / securityType2 for government indicators,
+      2. Market sector 'Corp'           → Credit  (even if securityType
+         contains a word like DOMESTIC, e.g. "DOMESTIC MTN")
+      3. Check securityType / securityType2 for government indicators,
          but only when no corporate keyword is present in the same field
-      5. Default                         → Credit
+      4. Default                         → Credit
     """
     # 1. Definitive government sectors
     if market_sector in GOVT_SECTORS:
@@ -119,15 +206,7 @@ def classify_asset_class(market_sector: str, security_type: str, security_type2:
     if market_sector in CORP_SECTORS:
         return 'Credit'
 
-    # 3. Mortgage sector — sub-classify as agency (Rate) or non-agency (Credit)
-    if market_sector in MTGE_SECTORS:
-        # Check all available text fields for agency indicators
-        combined = ' '.join(filter(None, [security_type, security_type2, name])).upper()
-        if any(kw in combined for kw in AGENCY_MBS_KEYWORDS):
-            return 'Rate'
-        return 'Credit'
-
-    # 4. Heuristic: look for government indicators in security types,
+    # 3. Heuristic: look for government indicators in security types,
     #    but exclude when a corporate keyword is also present
     for sec_type in [security_type, security_type2]:
         if sec_type:
@@ -142,6 +221,65 @@ def classify_asset_class(market_sector: str, security_type: str, security_type2:
                     return 'Rate'
 
     return 'Credit'
+
+
+def apply_classifications(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply Asset_Class and Market classifications using Capital IQ data primarily.
+    """
+    print("Applying classifications using Capital IQ Security Type...")
+
+    # Check if we have Capital IQ Security Type column
+    security_type_col = 'Security Type'  # Capital IQ column
+    has_ciq_security_type = security_type_col in df.columns
+
+    if has_ciq_security_type:
+        print(f"✓ Found Capital IQ '{security_type_col}' column")
+        # Show the unique Security Type values
+        unique_types = df[security_type_col].dropna().unique()
+        print(f"  Unique Security Types found: {list(unique_types)}")
+    else:
+        print(f"⚠ Capital IQ '{security_type_col}' column not found, using OpenFIGI fallback")
+
+    # Apply Asset_Class classification
+    df['Asset_Class'] = df.apply(
+        lambda row: classify_asset_class_ciq(
+            row.get('Security Type', ''),  # Capital IQ Security Type (primary)
+            row.get('Market_Sector', ''),  # OpenFIGI Market Sector (fallback)
+            row.get('Security_Type2', '')  # OpenFIGI Security Type 2 (fallback)
+        ),
+        axis=1
+    )
+
+    # Apply Market classification
+    df['Market'] = df.apply(
+        lambda row: classify_market_from_ciq(
+            row.get('Country of Issuance', ''),  # Capital IQ Country (primary)
+            row.get('ISIN', '')  # ISIN country prefix (fallback)
+        ),
+        axis=1
+    )
+
+    # Count and report classifications
+    rate_count = sum(df['Asset_Class'] == 'Rate')
+    credit_count = sum(df['Asset_Class'] == 'Credit')
+    g10_count = sum(df['Market'] == 'G10')
+    em_count = sum(df['Market'] == 'EM')
+
+    print(f"\n✓ Final Classifications:")
+    print(f"  Asset Class: Rate={rate_count}, Credit={credit_count}")
+    print(f"  Market: G10={g10_count}, EM={em_count}")
+
+    # Show breakdown by Security Type if available
+    if has_ciq_security_type:
+        print(f"\n📊 Asset Class by Security Type:")
+        breakdown = df.groupby(['Security Type', 'Asset_Class']).size().unstack(fill_value=0)
+        for sec_type in breakdown.index:
+            rate_cnt = breakdown.loc[sec_type, 'Rate'] if 'Rate' in breakdown.columns else 0
+            credit_cnt = breakdown.loc[sec_type, 'Credit'] if 'Credit' in breakdown.columns else 0
+            print(f"  {sec_type}: Rate={rate_cnt}, Credit={credit_cnt}")
+
+    return df
 
 
 # ============================================================================
@@ -194,30 +332,24 @@ def process_openfigi_response(isin: str, result: Dict) -> Dict:
         'Composite_FIGI': '',
         'Security_Description': '',
         'Num_Matches': 0,
-        'Asset_Class': '',
-        'Market': classify_market(isin),
+        # Remove Asset_Class and Market - will be added later after CIQ merge
     }
 
     if 'data' in result and result['data']:
         match = result['data'][0]
-        market_sector = match.get('marketSector', '')
-        security_type = match.get('securityType', '')
-        security_type2 = match.get('securityType2', '')
-        bond_name = match.get('name', '')
         return {
             'ISIN': isin,
-            'Name': bond_name,
+            'Name': match.get('name', ''),
             'Ticker': match.get('ticker', ''),
-            'Security_Type': security_type,
-            'Security_Type2': security_type2,
-            'Market_Sector': market_sector,
+            'Security_Type': match.get('securityType', ''),
+            'Security_Type2': match.get('securityType2', ''),
+            'Market_Sector': match.get('marketSector', ''),
             'Exchange_Code': match.get('exchCode', ''),
             'FIGI': match.get('figi', ''),
             'Composite_FIGI': match.get('compositeFIGI', '') or '',
             'Security_Description': match.get('securityDescription', ''),
             'Num_Matches': len(result['data']),
-            'Asset_Class': classify_asset_class(market_sector, security_type, security_type2, bond_name),
-            'Market': classify_market(isin),
+            # Classifications will be applied after CIQ merge
         }
     elif 'error' in result:
         base_record['Name'] = f"ERROR: {result['error']}"
@@ -273,7 +405,6 @@ def run_openfigi_lookup(isins: List[str], api_key: Optional[str] = None) -> List
                     'Ticker': '', 'Security_Type': '', 'Security_Type2': '',
                     'Market_Sector': '', 'Exchange_Code': '', 'FIGI': '',
                     'Composite_FIGI': '', 'Security_Description': '', 'Num_Matches': 0,
-                    'Asset_Class': '', 'Market': classify_market(isin),
                 })
 
         if batch_num < total_batches - 1:
@@ -314,11 +445,35 @@ def _is_cell_pending(val_text: str) -> bool:
     ))
 
 
+def _col_letter(col_num: int) -> str:
+    """Convert 1-based column number to Excel letter (1='A', 27='AA', etc.)."""
+    result = ""
+    while col_num > 0:
+        col_num, remainder = divmod(col_num - 1, 26)
+        result = chr(65 + remainder) + result
+    return result
+
+
+def _read_column_bulk(ws, col: int, start_row: int, end_row: int) -> list:
+    """Read an entire column range at once using bulk COM read (single call)."""
+    rng = ws.Range(ws.Cells(start_row, col), ws.Cells(end_row, col))
+    # .Value on a range returns a tuple of tuples: ((val,), (val,), ...)
+    vals = rng.Value
+    if vals is None:
+        return [''] * (end_row - start_row + 1)
+    # Single cell returns a scalar, not a tuple
+    if not isinstance(vals, tuple):
+        return [str(vals) if vals else '']
+    return [str(row[0]) if row[0] is not None else '' for row in vals]
+
+
 def wait_for_ciq_formulas(ws, data_start_row, data_end_row, formula_cols,
                           timeout=600, check_interval=10):
     """
     Wait for ALL CIQ formulas to finish calculating across ALL rows and
     ALL formula columns.
+
+    Uses BULK range reads instead of cell-by-cell access for ~100x speed-up.
 
     Args:
         ws: Excel worksheet COM object
@@ -337,7 +492,7 @@ def wait_for_ciq_formulas(ws, data_start_row, data_end_row, formula_cols,
     total_cells = total_rows * len(formula_cols)
     print(f"Waiting for CIQ formulas to calculate...")
     print(f"  Monitoring {total_rows} rows × {len(formula_cols)} formula columns = {total_cells} cells")
-    print(f"  Timeout: {timeout}s")
+    print(f"  Timeout: {timeout}s  (bulk read mode — {len(formula_cols)} COM calls per check)")
 
     start_time = time.time()
 
@@ -346,27 +501,24 @@ def wait_for_ciq_formulas(ws, data_start_row, data_end_row, formula_cols,
         errors = 0
         success = 0
         empty = 0
-        pending_locations = []  # Track a few examples for logging
+        pending_locations = []
 
-        # Scan ALL rows and ALL formula columns
-        for row in range(data_start_row, data_end_row + 1):
-            for col in formula_cols:
-                try:
-                    val = str(ws.Cells(row, col).Text or "")
+        # BULK READ: one COM call per formula column instead of per cell
+        for col in formula_cols:
+            col_vals = _read_column_bulk(ws, col, data_start_row, data_end_row)
+            col_ltr = _col_letter(col)
 
-                    if _is_cell_pending(val):
-                        pending += 1
-                        if len(pending_locations) < 5:  # Keep first 5 examples
-                            col_letter = chr(ord('A') + col - 1) if col <= 26 else f"Col{col}"
-                            pending_locations.append(f"{col_letter}{row}")
-                    elif val.startswith("#"):
-                        errors += 1
-                    elif val.strip():
-                        success += 1
-                    else:
-                        empty += 1
-                except Exception:
-                    pass
+            for row_offset, val in enumerate(col_vals):
+                if _is_cell_pending(val):
+                    pending += 1
+                    if len(pending_locations) < 5:
+                        pending_locations.append(f"{col_ltr}{data_start_row + row_offset}")
+                elif val.startswith("#"):
+                    errors += 1
+                elif val.strip():
+                    success += 1
+                else:
+                    empty += 1
 
         elapsed = int(time.time() - start_time)
         done = success + errors
@@ -397,15 +549,21 @@ def wait_for_ciq_formulas(ws, data_start_row, data_end_row, formula_cols,
     return False
 
 
-def run_capiq_enrichment(isins: List[str], template_path: str, output_path: str, interactive: bool = True) -> Optional[pd.DataFrame]:
+def run_capiq_enrichment(isins: List[str], template_path: str, output_path: str,
+                         interactive: bool = True, batch_size: int = 2000) -> Optional[pd.DataFrame]:
     """
     Run Capital IQ enrichment using Excel template.
+
+    Processes ISINs in batches to avoid overwhelming the CIQ add-in.
+    Uses bulk COM operations for ~100x speedup over cell-by-cell access.
 
     Args:
         isins: List of ISINs to look up
         template_path: Path to Excel template with CIQ formulas
         output_path: Path to save CIQ results
         interactive: If True, prompt user in terminal. If False (server mode), proceed immediately.
+        batch_size: Number of ISINs to process per batch (default 2000).
+                    Smaller batches = less CIQ pressure, larger = fewer rounds.
 
     Returns:
         DataFrame with CIQ results, or None if failed
@@ -473,7 +631,8 @@ def run_capiq_enrichment(isins: List[str], template_path: str, output_path: str,
             open_names = [workbook.Name for workbook in excel.Workbooks]
             print(f"ERROR: Could not find '{template_name}' in open workbooks.")
             print("Open workbooks:", open_names)
-            raise RuntimeError(f"Could not find '{template_name}' in open Excel workbooks. Open workbooks: {open_names}")
+            raise RuntimeError(
+                f"Could not find '{template_name}' in open Excel workbooks. Open workbooks: {open_names}")
 
         ws = wb.ActiveSheet
 
@@ -493,88 +652,149 @@ def run_capiq_enrichment(isins: List[str], template_path: str, output_path: str,
 
         if not formula_cols:
             print("WARNING: No formulas found in template row 2!")
-            raise RuntimeError("No CIQ formulas found in row 2 of the template. Make sure the template has formulas in row 2.")
+            raise RuntimeError(
+                "No CIQ formulas found in row 2 of the template. Make sure the template has formulas in row 2.")
 
         last_col = max(formula_cols)
 
-        # Clear existing data below template row
-        used_rows = ws.UsedRange.Rows.Count
-        if used_rows > template_row:
-            print(f"Clearing rows {template_row + 1} to {used_rows}...")
-            ws.Range(
-                ws.Cells(template_row + 1, 1),
-                ws.Cells(used_rows, last_col)
-            ).Clear()
+        # Read headers once (reused across batches)
+        header_range = ws.Range(ws.Cells(header_row, 1), ws.Cells(header_row, last_col))
+        header_vals = header_range.Value
+        if isinstance(header_vals, tuple):
+            headers = [str(v) if v else f"Column_{i+1}" for i, v in enumerate(header_vals[0])]
+        else:
+            headers = [str(header_vals) if header_vals else "Column_1"]
 
-        # Copy template row down for all ISINs
-        print(f"\nPopulating {len(isins)} ISINs...")
+        # Save template row formulas before we start (so we can restore per batch)
+        template_formulas = []
+        for col_num in range(1, last_col + 1):
+            template_formulas.append(ws.Cells(template_row, col_num).Formula)
 
-        if len(isins) > 1:
-            source_range = ws.Range(ws.Cells(template_row, 1), ws.Cells(template_row, last_col))
-            dest_range = ws.Range(ws.Cells(template_row, 1), ws.Cells(template_row + len(isins) - 1, last_col))
-            source_range.Copy()
-            dest_range.PasteSpecial(Paste=-4123)
-            excel.CutCopyMode = False
+        # ── BATCHED PROCESSING ──
+        # Split ISINs into batches to avoid overwhelming the CIQ add-in.
+        # Each batch: clear → restore template → populate → calculate → wait → read → next batch
+        isin_batches = list(chunk_list(isins, batch_size))
+        total_batches = len(isin_batches)
+        all_batch_data = []
 
-        # Fill in ISINs
-        for i, isin in enumerate(isins):
-            ws.Cells(template_row + i, isin_col).Value = isin
-            if (i + 1) % 500 == 0:
-                print(f"  Populated {i + 1}/{len(isins)} ISINs...")
+        print(f"\n{'='*50}")
+        print(f"Processing {len(isins)} ISINs in {total_batches} batch(es) of up to {batch_size}")
+        print(f"{'='*50}")
 
-        print(f"✓ Populated all {len(isins)} ISINs")
+        overall_start = time.time()
 
-        # Trigger calculation
-        print("\nTriggering calculation...")
-        excel.CalculateFull()
+        for batch_idx, batch_isins in enumerate(isin_batches):
+            batch_num = batch_idx + 1
+            batch_len = len(batch_isins)
+            print(f"\n── Batch {batch_num}/{total_batches} ({batch_len} ISINs) ──")
 
-        # Wait for formulas — pass ALL formula columns so every cell is monitored
-        data_end_row = template_row + len(isins) - 1
-        formulas_done = wait_for_ciq_formulas(
-            ws, template_row, data_end_row, formula_cols, timeout=600
-        )
+            # Clear existing data (template row AND below) to start fresh
+            used_rows = ws.UsedRange.Rows.Count
+            if used_rows >= template_row:
+                ws.Range(
+                    ws.Cells(template_row, 1),
+                    ws.Cells(max(used_rows, template_row), last_col)
+                ).Clear()
 
-        # Final calculation pass + extra settle time
-        print("Final calculation pass...")
-        excel.CalculateFull()
-        time.sleep(10)
+            # Restore template row formulas (they were cleared above)
+            for col_num in range(1, last_col + 1):
+                formula = template_formulas[col_num - 1]
+                if formula and str(formula).startswith('='):
+                    ws.Cells(template_row, col_num).Formula = formula
 
-        # If first wait timed out, do one more check after the extra settle
-        if not formulas_done:
-            print("Running additional wait after final calculation...")
+            # Populate template formulas + ISINs with screen updating off
+            excel.ScreenUpdating = False
+            excel.Calculation = -4135  # xlCalculationManual
+
+            try:
+                # Copy template row down for this batch
+                if batch_len > 1:
+                    source_range = ws.Range(ws.Cells(template_row, 1), ws.Cells(template_row, last_col))
+                    dest_range = ws.Range(ws.Cells(template_row, 1),
+                                          ws.Cells(template_row + batch_len - 1, last_col))
+                    source_range.Copy()
+                    dest_range.PasteSpecial(Paste=-4123)
+                    excel.CutCopyMode = False
+
+                # BULK WRITE: all ISINs at once (single COM call)
+                isin_array = tuple((isin,) for isin in batch_isins)
+                isin_range = ws.Range(
+                    ws.Cells(template_row, isin_col),
+                    ws.Cells(template_row + batch_len - 1, isin_col)
+                )
+                isin_range.Value = isin_array
+                print(f"  ✓ Populated {batch_len} ISINs (bulk write)")
+            finally:
+                excel.ScreenUpdating = True
+                excel.Calculation = -4105  # xlCalculationAutomatic
+
+            # Trigger calculation
+            print("  Triggering calculation...")
+            excel.CalculateFull()
+
+            # Wait for formulas — pass ALL formula columns so every cell is monitored
+            data_end_row = template_row + batch_len - 1
             formulas_done = wait_for_ciq_formulas(
-                ws, template_row, data_end_row, formula_cols, timeout=120
+                ws, template_row, data_end_row, formula_cols, timeout=600
             )
 
-        # Read results back into DataFrame
-        print("Reading results...")
+            # Final calculation pass + settle
+            print("  Final calculation pass...")
+            excel.CalculateFull()
+            time.sleep(5)
 
-        # Get headers
-        headers = []
-        for col in range(1, last_col + 1):
-            header = ws.Cells(header_row, col).Value
-            headers.append(str(header) if header else f"Column_{col}")
+            if not formulas_done:
+                print("  Running additional wait after final calculation...")
+                formulas_done = wait_for_ciq_formulas(
+                    ws, template_row, data_end_row, formula_cols, timeout=120
+                )
 
-        # Get data
-        data = []
-        for row in range(template_row, data_end_row + 1):
-            row_data = {}
-            for col_idx, col in enumerate(range(1, last_col + 1)):
-                val = ws.Cells(row, col).Value
-                row_data[headers[col_idx]] = val
-            data.append(row_data)
+            # BULK READ: read all batch data in single COM call
+            print("  Reading results (bulk read)...")
+            data_range = ws.Range(ws.Cells(template_row, 1), ws.Cells(data_end_row, last_col))
+            raw_data = data_range.Value
 
-        ciq_df = pd.DataFrame(data)
+            if raw_data is None:
+                batch_data = []
+            elif not isinstance(raw_data, tuple):
+                batch_data = [{headers[0]: raw_data}]
+            else:
+                batch_data = []
+                for row_tuple in raw_data:
+                    row_data = {}
+                    for col_idx, val in enumerate(row_tuple):
+                        if col_idx < len(headers):
+                            row_data[headers[col_idx]] = val
+                    batch_data.append(row_data)
+
+            print(f"  ✓ Read {len(batch_data)} rows × {len(headers)} columns")
+            all_batch_data.extend(batch_data)
+
+            # Progress summary
+            done_so_far = len(all_batch_data)
+            elapsed = time.time() - overall_start
+            if batch_idx > 0:
+                eta = (elapsed / done_so_far) * (len(isins) - done_so_far)
+                print(f"  Progress: {done_so_far}/{len(isins)} "
+                      f"({done_so_far/len(isins)*100:.0f}%), "
+                      f"ETA: {int(eta//60)}m {int(eta%60)}s")
+
+        # ── All batches complete — assemble final DataFrame ──
+        overall_elapsed = time.time() - overall_start
+        print(f"\n✓ All {total_batches} batch(es) complete in "
+              f"{int(overall_elapsed//60)}m {int(overall_elapsed%60)}s")
+
+        ciq_df = pd.DataFrame(all_batch_data)
 
         # ── Post-read validation: detect any cells still showing pending ──
         pending_cells = 0
         pending_examples = []
-        for idx, row_data in enumerate(data):
+        for idx, row_data in enumerate(all_batch_data):
             for col_name, val in row_data.items():
                 if val and _is_cell_pending(str(val)):
                     pending_cells += 1
                     if len(pending_examples) < 10:
-                        isin_val = row_data.get(headers[0], f"row {idx + template_row}")
+                        isin_val = row_data.get(headers[0], f"row {idx}")
                         pending_examples.append(f"{col_name} @ ISIN {isin_val}")
 
         if pending_cells > 0:
@@ -582,9 +802,9 @@ def run_capiq_enrichment(isins: List[str], template_path: str, output_path: str,
             print(f"  These cells were read before CIQ finished calculating.")
             for ex in pending_examples:
                 print(f"    • {ex}")
-            print(f"  Consider re-running with a longer timeout or fewer ISINs per batch.")
+            print(f"  Consider re-running with a longer timeout or smaller --ciq-batch-size.")
 
-            # Replace pending values with empty string so they don't pollute output
+            # Replace pending values with None
             for col in ciq_df.columns:
                 mask = ciq_df[col].apply(
                     lambda v: _is_cell_pending(str(v)) if pd.notna(v) else False
@@ -625,6 +845,8 @@ def main():
     parser.add_argument('--sheet-name', default='Bank AG', help='Sheet name to read ISINs from')
     parser.add_argument('--skip-openfigi', action='store_true', help='Skip OpenFIGI lookup')
     parser.add_argument('--skip-capiq', action='store_true', help='Skip Capital IQ enrichment')
+    parser.add_argument('--ciq-batch-size', type=int, default=2000,
+                        help='ISINs per CIQ batch (default 2000, reduce if CIQ stalls)')
 
     args = parser.parse_args()
 
@@ -691,7 +913,8 @@ def main():
 
     if not args.skip_capiq and args.template and HAS_WIN32:
         ciq_output = args.output_file.replace('.xlsx', '_capiq.xlsx').replace('.csv', '_capiq.xlsx')
-        ciq_df = run_capiq_enrichment(isins, args.template, ciq_output)
+        ciq_df = run_capiq_enrichment(isins, args.template, ciq_output,
+                                       batch_size=args.ciq_batch_size)
     elif not args.template:
         print("\nNo CIQ template specified - skipping Capital IQ enrichment")
         print("  Use --template to specify a CIQ template file")
@@ -743,6 +966,15 @@ def main():
         print(f"✓ Merged CIQ data ({len(ciq_df.columns)} columns)")
 
     # -------------------------------------------------------------------------
+    # Step 4: Apply Classifications (AFTER CIQ merge)
+    # -------------------------------------------------------------------------
+    print("\n" + "=" * 60)
+    print("STEP 4: Apply Classifications")
+    print("=" * 60)
+
+    final_df = apply_classifications(final_df)
+
+    # -------------------------------------------------------------------------
     # Save Final Results
     # -------------------------------------------------------------------------
     if args.output_file.endswith('.xlsx'):
@@ -760,12 +992,13 @@ def main():
     print(f"Output columns: {len(final_df.columns)}")
     print(f"Output file: {args.output_file}")
 
-    if openfigi_results:
-        rate_count = sum(1 for r in openfigi_results if r.get('Asset_Class') == 'Rate')
-        credit_count = sum(1 for r in openfigi_results if r.get('Asset_Class') == 'Credit')
-        g10_count = sum(1 for r in openfigi_results if r.get('Market') == 'G10')
-        em_count = sum(1 for r in openfigi_results if r.get('Market') == 'EM')
-        print(f"\nClassifications:")
+    # Summary stats (now using final_df instead of openfigi_results)
+    if 'Asset_Class' in final_df.columns:
+        rate_count = sum(final_df['Asset_Class'] == 'Rate')
+        credit_count = sum(final_df['Asset_Class'] == 'Credit')
+        g10_count = sum(final_df['Market'] == 'G10')
+        em_count = sum(final_df['Market'] == 'EM')
+        print(f"\nFinal Classifications:")
         print(f"  Asset Class: Rate={rate_count}, Credit={credit_count}")
         print(f"  Market: G10={g10_count}, EM={em_count}")
 
@@ -775,6 +1008,5 @@ def main():
 
 
 if __name__ == "__main__":
-
     ### 551f579d-8617-4dcd-99a6-0b0eef613734
     sys.exit(main())
