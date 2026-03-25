@@ -314,11 +314,49 @@ def _is_cell_pending(val_text: str) -> bool:
     ))
 
 
+def _col_letter(col_num: int) -> str:
+    """Convert 1-based column number to Excel letter (1='A', 27='AA', etc.)."""
+    result = ""
+    while col_num > 0:
+        col_num, remainder = divmod(col_num - 1, 26)
+        result = chr(65 + remainder) + result
+    return result
+
+
+def _read_column_bulk(ws, col: int, start_row: int, end_row: int) -> list:
+    """Read an entire column range at once using bulk COM read (single call)."""
+    rng = ws.Range(ws.Cells(start_row, col), ws.Cells(end_row, col))
+    vals = rng.Text  # .Text not available for ranges; fall back to .Value
+    # .Value on a range returns a tuple of tuples: ((val,), (val,), ...)
+    vals = rng.Value
+    if vals is None:
+        return [''] * (end_row - start_row + 1)
+    # Single cell returns a scalar, not a tuple
+    if not isinstance(vals, tuple):
+        return [str(vals) if vals else '']
+    return [str(row[0]) if row[0] is not None else '' for row in vals]
+
+
+def _read_range_bulk(ws, start_row: int, end_row: int, start_col: int, end_col: int):
+    """Read a 2D block of cells in a single COM call. Returns list of lists."""
+    rng = ws.Range(ws.Cells(start_row, start_col), ws.Cells(end_row, end_col))
+    vals = rng.Value
+    if vals is None:
+        rows = end_row - start_row + 1
+        cols = end_col - start_col + 1
+        return [[None] * cols for _ in range(rows)]
+    if not isinstance(vals, tuple):
+        return [[vals]]
+    return [list(row) for row in vals]
+
+
 def wait_for_ciq_formulas(ws, data_start_row, data_end_row, formula_cols,
                           timeout=600, check_interval=10):
     """
     Wait for ALL CIQ formulas to finish calculating across ALL rows and
     ALL formula columns.
+
+    Uses BULK range reads instead of cell-by-cell access for ~100x speed-up.
 
     Args:
         ws: Excel worksheet COM object
@@ -337,7 +375,7 @@ def wait_for_ciq_formulas(ws, data_start_row, data_end_row, formula_cols,
     total_cells = total_rows * len(formula_cols)
     print(f"Waiting for CIQ formulas to calculate...")
     print(f"  Monitoring {total_rows} rows × {len(formula_cols)} formula columns = {total_cells} cells")
-    print(f"  Timeout: {timeout}s")
+    print(f"  Timeout: {timeout}s  (bulk read mode — {len(formula_cols)} COM calls per check)")
 
     start_time = time.time()
 
@@ -346,27 +384,24 @@ def wait_for_ciq_formulas(ws, data_start_row, data_end_row, formula_cols,
         errors = 0
         success = 0
         empty = 0
-        pending_locations = []  # Track a few examples for logging
+        pending_locations = []
 
-        # Scan ALL rows and ALL formula columns
-        for row in range(data_start_row, data_end_row + 1):
-            for col in formula_cols:
-                try:
-                    val = str(ws.Cells(row, col).Text or "")
+        # BULK READ: one COM call per formula column instead of per cell
+        for col in formula_cols:
+            col_vals = _read_column_bulk(ws, col, data_start_row, data_end_row)
+            col_ltr = _col_letter(col)
 
-                    if _is_cell_pending(val):
-                        pending += 1
-                        if len(pending_locations) < 5:  # Keep first 5 examples
-                            col_letter = chr(ord('A') + col - 1) if col <= 26 else f"Col{col}"
-                            pending_locations.append(f"{col_letter}{row}")
-                    elif val.startswith("#"):
-                        errors += 1
-                    elif val.strip():
-                        success += 1
-                    else:
-                        empty += 1
-                except Exception:
-                    pass
+            for row_offset, val in enumerate(col_vals):
+                if _is_cell_pending(val):
+                    pending += 1
+                    if len(pending_locations) < 5:
+                        pending_locations.append(f"{col_ltr}{data_start_row + row_offset}")
+                elif val.startswith("#"):
+                    errors += 1
+                elif val.strip():
+                    success += 1
+                else:
+                    empty += 1
 
         elapsed = int(time.time() - start_time)
         done = success + errors
@@ -397,15 +432,21 @@ def wait_for_ciq_formulas(ws, data_start_row, data_end_row, formula_cols,
     return False
 
 
-def run_capiq_enrichment(isins: List[str], template_path: str, output_path: str, interactive: bool = True) -> Optional[pd.DataFrame]:
+def run_capiq_enrichment(isins: List[str], template_path: str, output_path: str,
+                         interactive: bool = True, batch_size: int = 2000) -> Optional[pd.DataFrame]:
     """
     Run Capital IQ enrichment using Excel template.
+
+    Processes ISINs in batches to avoid overwhelming the CIQ add-in.
+    Uses bulk COM operations for ~100x speedup over cell-by-cell access.
 
     Args:
         isins: List of ISINs to look up
         template_path: Path to Excel template with CIQ formulas
         output_path: Path to save CIQ results
         interactive: If True, prompt user in terminal. If False (server mode), proceed immediately.
+        batch_size: Number of ISINs to process per batch (default 2000).
+                    Smaller batches = less CIQ pressure, larger = fewer rounds.
 
     Returns:
         DataFrame with CIQ results, or None if failed
@@ -497,84 +538,133 @@ def run_capiq_enrichment(isins: List[str], template_path: str, output_path: str,
 
         last_col = max(formula_cols)
 
-        # Clear existing data below template row
-        used_rows = ws.UsedRange.Rows.Count
-        if used_rows > template_row:
-            print(f"Clearing rows {template_row + 1} to {used_rows}...")
-            ws.Range(
-                ws.Cells(template_row + 1, 1),
-                ws.Cells(used_rows, last_col)
-            ).Clear()
+        # Read headers once (reused across batches)
+        header_range = ws.Range(ws.Cells(header_row, 1), ws.Cells(header_row, last_col))
+        header_vals = header_range.Value
+        if isinstance(header_vals, tuple):
+            headers = [str(v) if v else f"Column_{i+1}" for i, v in enumerate(header_vals[0])]
+        else:
+            headers = [str(header_vals) if header_vals else "Column_1"]
 
-        # Copy template row down for all ISINs
-        print(f"\nPopulating {len(isins)} ISINs...")
+        # ── BATCHED PROCESSING ──
+        # Split ISINs into batches to avoid overwhelming the CIQ add-in.
+        # Each batch: clear → populate → calculate → wait → read → next batch
+        isin_batches = list(chunk_list(isins, batch_size))
+        total_batches = len(isin_batches)
+        all_batch_data = []
 
-        if len(isins) > 1:
-            source_range = ws.Range(ws.Cells(template_row, 1), ws.Cells(template_row, last_col))
-            dest_range = ws.Range(ws.Cells(template_row, 1), ws.Cells(template_row + len(isins) - 1, last_col))
-            source_range.Copy()
-            dest_range.PasteSpecial(Paste=-4123)
-            excel.CutCopyMode = False
+        print(f"\n{'='*50}")
+        print(f"Processing {len(isins)} ISINs in {total_batches} batch(es) of up to {batch_size}")
+        print(f"{'='*50}")
 
-        # Fill in ISINs
-        for i, isin in enumerate(isins):
-            ws.Cells(template_row + i, isin_col).Value = isin
-            if (i + 1) % 500 == 0:
-                print(f"  Populated {i + 1}/{len(isins)} ISINs...")
+        overall_start = time.time()
 
-        print(f"✓ Populated all {len(isins)} ISINs")
+        for batch_idx, batch_isins in enumerate(isin_batches):
+            batch_num = batch_idx + 1
+            batch_len = len(batch_isins)
+            print(f"\n── Batch {batch_num}/{total_batches} ({batch_len} ISINs) ──")
 
-        # Trigger calculation
-        print("\nTriggering calculation...")
-        excel.CalculateFull()
+            # Clear existing data below header row
+            used_rows = ws.UsedRange.Rows.Count
+            if used_rows > header_row:
+                ws.Range(
+                    ws.Cells(header_row + 1, 1),
+                    ws.Cells(max(used_rows, header_row + 1), last_col)
+                ).Clear()
 
-        # Wait for formulas — pass ALL formula columns so every cell is monitored
-        data_end_row = template_row + len(isins) - 1
-        formulas_done = wait_for_ciq_formulas(
-            ws, template_row, data_end_row, formula_cols, timeout=600
-        )
+            # Populate template formulas + ISINs with screen updating off
+            excel.ScreenUpdating = False
+            excel.Calculation = -4135  # xlCalculationManual
 
-        # Final calculation pass + extra settle time
-        print("Final calculation pass...")
-        excel.CalculateFull()
-        time.sleep(10)
+            try:
+                # Copy template row down for this batch
+                if batch_len > 1:
+                    source_range = ws.Range(ws.Cells(template_row, 1), ws.Cells(template_row, last_col))
+                    dest_range = ws.Range(ws.Cells(template_row, 1),
+                                          ws.Cells(template_row + batch_len - 1, last_col))
+                    source_range.Copy()
+                    dest_range.PasteSpecial(Paste=-4123)
+                    excel.CutCopyMode = False
 
-        # If first wait timed out, do one more check after the extra settle
-        if not formulas_done:
-            print("Running additional wait after final calculation...")
+                # BULK WRITE: all ISINs at once (single COM call)
+                isin_array = tuple((isin,) for isin in batch_isins)
+                isin_range = ws.Range(
+                    ws.Cells(template_row, isin_col),
+                    ws.Cells(template_row + batch_len - 1, isin_col)
+                )
+                isin_range.Value = isin_array
+                print(f"  ✓ Populated {batch_len} ISINs (bulk write)")
+            finally:
+                excel.ScreenUpdating = True
+                excel.Calculation = -4105  # xlCalculationAutomatic
+
+            # Trigger calculation
+            print("  Triggering calculation...")
+            excel.CalculateFull()
+
+            # Wait for formulas
+            data_end_row = template_row + batch_len - 1
             formulas_done = wait_for_ciq_formulas(
-                ws, template_row, data_end_row, formula_cols, timeout=120
+                ws, template_row, data_end_row, formula_cols, timeout=600
             )
 
-        # Read results back into DataFrame
-        print("Reading results...")
+            # Final calculation pass + settle
+            print("  Final calculation pass...")
+            excel.CalculateFull()
+            time.sleep(5)
 
-        # Get headers
-        headers = []
-        for col in range(1, last_col + 1):
-            header = ws.Cells(header_row, col).Value
-            headers.append(str(header) if header else f"Column_{col}")
+            if not formulas_done:
+                print("  Running additional wait after final calculation...")
+                formulas_done = wait_for_ciq_formulas(
+                    ws, template_row, data_end_row, formula_cols, timeout=120
+                )
 
-        # Get data
-        data = []
-        for row in range(template_row, data_end_row + 1):
-            row_data = {}
-            for col_idx, col in enumerate(range(1, last_col + 1)):
-                val = ws.Cells(row, col).Value
-                row_data[headers[col_idx]] = val
-            data.append(row_data)
+            # BULK READ: read all batch data in single COM call
+            print("  Reading results (bulk read)...")
+            data_range = ws.Range(ws.Cells(template_row, 1), ws.Cells(data_end_row, last_col))
+            raw_data = data_range.Value
 
-        ciq_df = pd.DataFrame(data)
+            if raw_data is None:
+                batch_data = []
+            elif not isinstance(raw_data, tuple):
+                batch_data = [{headers[0]: raw_data}]
+            else:
+                batch_data = []
+                for row_tuple in raw_data:
+                    row_data = {}
+                    for col_idx, val in enumerate(row_tuple):
+                        if col_idx < len(headers):
+                            row_data[headers[col_idx]] = val
+                    batch_data.append(row_data)
+
+            print(f"  ✓ Read {len(batch_data)} rows × {len(headers)} columns")
+            all_batch_data.extend(batch_data)
+
+            # Progress summary
+            done_so_far = len(all_batch_data)
+            elapsed = time.time() - overall_start
+            if batch_idx > 0:
+                eta = (elapsed / done_so_far) * (len(isins) - done_so_far)
+                print(f"  Progress: {done_so_far}/{len(isins)} "
+                      f"({done_so_far/len(isins)*100:.0f}%), "
+                      f"ETA: {int(eta//60)}m {int(eta%60)}s")
+
+        # ── All batches complete — assemble final DataFrame ──
+        overall_elapsed = time.time() - overall_start
+        print(f"\n✓ All {total_batches} batch(es) complete in "
+              f"{int(overall_elapsed//60)}m {int(overall_elapsed%60)}s")
+
+        ciq_df = pd.DataFrame(all_batch_data)
 
         # ── Post-read validation: detect any cells still showing pending ──
         pending_cells = 0
         pending_examples = []
-        for idx, row_data in enumerate(data):
+        for idx, row_data in enumerate(all_batch_data):
             for col_name, val in row_data.items():
                 if val and _is_cell_pending(str(val)):
                     pending_cells += 1
                     if len(pending_examples) < 10:
-                        isin_val = row_data.get(headers[0], f"row {idx + template_row}")
+                        isin_val = row_data.get(headers[0], f"row {idx}")
                         pending_examples.append(f"{col_name} @ ISIN {isin_val}")
 
         if pending_cells > 0:
@@ -582,9 +672,9 @@ def run_capiq_enrichment(isins: List[str], template_path: str, output_path: str,
             print(f"  These cells were read before CIQ finished calculating.")
             for ex in pending_examples:
                 print(f"    • {ex}")
-            print(f"  Consider re-running with a longer timeout or fewer ISINs per batch.")
+            print(f"  Consider re-running with a longer timeout or smaller --ciq-batch-size.")
 
-            # Replace pending values with empty string so they don't pollute output
+            # Replace pending values with None
             for col in ciq_df.columns:
                 mask = ciq_df[col].apply(
                     lambda v: _is_cell_pending(str(v)) if pd.notna(v) else False
@@ -625,6 +715,8 @@ def main():
     parser.add_argument('--sheet-name', default='Bank AG', help='Sheet name to read ISINs from')
     parser.add_argument('--skip-openfigi', action='store_true', help='Skip OpenFIGI lookup')
     parser.add_argument('--skip-capiq', action='store_true', help='Skip Capital IQ enrichment')
+    parser.add_argument('--ciq-batch-size', type=int, default=2000,
+                        help='ISINs per CIQ batch (default 2000, reduce if CIQ stalls)')
 
     args = parser.parse_args()
 
@@ -691,7 +783,8 @@ def main():
 
     if not args.skip_capiq and args.template and HAS_WIN32:
         ciq_output = args.output_file.replace('.xlsx', '_capiq.xlsx').replace('.csv', '_capiq.xlsx')
-        ciq_df = run_capiq_enrichment(isins, args.template, ciq_output)
+        ciq_df = run_capiq_enrichment(isins, args.template, ciq_output,
+                                       batch_size=args.ciq_batch_size)
     elif not args.template:
         print("\nNo CIQ template specified - skipping Capital IQ enrichment")
         print("  Use --template to specify a CIQ template file")
