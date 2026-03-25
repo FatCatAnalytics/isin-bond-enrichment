@@ -27,7 +27,6 @@ from bond_enhancement import (
     lookup_isins_openfigi,
     process_openfigi_response,
     classify_market,
-    apply_classifications,
     HAS_WIN32,
 )
 
@@ -50,6 +49,7 @@ BASE_DIR = Path(__file__).parent
 class Session:
     isins: List[str]
     filename: str
+    raw_bytes: Optional[bytes] = None          # stored until sheet is selected
     openfigi_results: Optional[List[Dict]] = None
     ciq_results: Optional[pd.DataFrame] = None
     final_df: Optional[pd.DataFrame] = None
@@ -67,25 +67,83 @@ async def serve_dashboard():
 
 
 @app.post("/api/upload")
-async def upload_file(file: UploadFile, sheet_name: str = Query("Bank AG")):
-    """Parse ISINs from uploaded Excel/CSV file."""
+async def upload_file(file: UploadFile):
+    """Upload file — return available sheet names so user can pick one."""
     content = await file.read()
-    buf = io.BytesIO(content)
+    session_id = str(uuid.uuid4())[:8]
 
-    try:
-        if file.filename.endswith(".csv"):
+    if file.filename.endswith(".csv"):
+        # CSV has no sheets — parse immediately
+        buf = io.BytesIO(content)
+        try:
             df = pd.read_csv(buf)
-        else:
-            try:
-                df = pd.read_excel(buf, sheet_name=sheet_name, engine="openpyxl")
-            except ValueError:
-                buf.seek(0)
-                df = pd.read_excel(buf, sheet_name=0, engine="openpyxl")
-                sheet_name = "Sheet1"
-    except Exception as e:
-        return {"error": f"Failed to parse file: {str(e)}"}
+        except Exception as e:
+            return {"error": f"Failed to parse CSV: {str(e)}"}
 
-    # Find ISIN column
+        isin_col = None
+        for col in df.columns:
+            if "ISIN" in str(col).upper():
+                isin_col = col
+                break
+        if isin_col is None:
+            isin_col = df.columns[0]
+
+        isins = df[isin_col].dropna().astype(str).str.strip().tolist()
+        isins = [i for i in isins if len(i) >= 10]
+
+        sessions[session_id] = Session(isins=isins, filename=file.filename)
+        return {
+            "session_id": session_id,
+            "sheets": [],
+            "auto_selected": True,
+            "sheet_name": "CSV",
+            "isins": isins,
+            "count": len(isins),
+            "filename": file.filename,
+        }
+
+    # Excel — detect sheet names and store raw bytes for later parsing
+    try:
+        from openpyxl import load_workbook
+        buf = io.BytesIO(content)
+        wb = load_workbook(buf, read_only=True, data_only=True)
+        sheet_names = wb.sheetnames
+        wb.close()
+    except Exception as e:
+        return {"error": f"Failed to read Excel file: {str(e)}"}
+
+    sessions[session_id] = Session(isins=[], filename=file.filename, raw_bytes=content)
+
+    # If only one sheet, auto-select it
+    if len(sheet_names) == 1:
+        return await _parse_sheet(session_id, sheet_names[0], file.filename, content)
+
+    return {
+        "session_id": session_id,
+        "sheets": sheet_names,
+        "auto_selected": False,
+        "filename": file.filename,
+    }
+
+
+@app.post("/api/select-sheet")
+async def select_sheet(session_id: str = Query(...), sheet_name: str = Query(...)):
+    """Parse ISINs from the user-selected sheet."""
+    session = sessions.get(session_id)
+    if not session or session.raw_bytes is None:
+        return {"error": "Session not found or file not uploaded"}
+
+    return await _parse_sheet(session_id, sheet_name, session.filename, session.raw_bytes)
+
+
+async def _parse_sheet(session_id: str, sheet_name: str, filename: str, raw_bytes: bytes):
+    """Parse ISINs from a specific sheet and update the session."""
+    buf = io.BytesIO(raw_bytes)
+    try:
+        df = pd.read_excel(buf, sheet_name=sheet_name, engine="openpyxl")
+    except Exception as e:
+        return {"error": f"Failed to read sheet '{sheet_name}': {str(e)}"}
+
     isin_col = None
     for col in df.columns:
         if "ISIN" in str(col).upper():
@@ -97,15 +155,18 @@ async def upload_file(file: UploadFile, sheet_name: str = Query("Bank AG")):
     isins = df[isin_col].dropna().astype(str).str.strip().tolist()
     isins = [i for i in isins if len(i) >= 10]
 
-    session_id = str(uuid.uuid4())[:8]
-    sessions[session_id] = Session(isins=isins, filename=file.filename)
+    session = sessions.get(session_id)
+    if session:
+        session.isins = isins
+        session.raw_bytes = None  # free memory — no longer needed
 
     return {
         "session_id": session_id,
+        "auto_selected": True,
+        "sheet_name": sheet_name,
         "isins": isins,
         "count": len(isins),
-        "filename": file.filename,
-        "sheet_name": sheet_name,
+        "filename": filename,
     }
 
 
@@ -341,16 +402,6 @@ async def run_merge_phase(websocket: WebSocket, session: Session):
 
     session.final_df = final_df
 
-    # Apply classifications (Asset_Class + Market) using CIQ data if available
-    final_df = apply_classifications(final_df)
-    session.final_df = final_df
-
-    # Compute classification counts
-    rate_count = int((final_df.get('Asset_Class', pd.Series()) == 'Rate').sum())
-    credit_count = int((final_df.get('Asset_Class', pd.Series()) == 'Credit').sum())
-    g10_count = int((final_df.get('Market', pd.Series()) == 'G10').sum())
-    em_count = int((final_df.get('Market', pd.Series()) == 'EM').sum())
-
     # Convert to JSON-safe preview
     preview = final_df.head(100).fillna("").to_dict(orient="records")
 
@@ -361,10 +412,6 @@ async def run_merge_phase(websocket: WebSocket, session: Session):
         "columns": list(final_df.columns),
         "has_ciq": has_ciq,
         "preview": preview,
-        "rate_count": rate_count,
-        "credit_count": credit_count,
-        "g10_count": g10_count,
-        "em_count": em_count,
     })
 
 

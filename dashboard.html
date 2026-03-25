@@ -1148,6 +1148,17 @@
             <div class="file-meta" id="fileMeta"></div>
           </div>
         </div>
+        <div id="sheetPicker" style="display:none;margin-top:12px">
+          <label style="font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-muted);display:block;margin-bottom:6px">Select Sheet</label>
+          <select id="sheetSelect" style="
+            width:100%;padding:10px 14px;font-family:var(--mono);font-size:12px;
+            background:var(--bg-deep);color:var(--text-primary);
+            border:1px solid var(--border-subtle);border-radius:var(--radius-md);
+            outline:none;cursor:pointer;transition:border-color 0.2s;
+            appearance:auto;
+          " onfocus="this.style.borderColor='var(--accent-gold)'" onblur="this.style.borderColor='var(--border-subtle)'">
+          </select>
+        </div>
         <div style="margin-top:16px">
           <label style="font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-muted);display:block;margin-bottom:6px">OpenFIGI API Key <span style="opacity:0.5">(optional — faster rate limits)</span></label>
           <input type="text" id="apiKeyInput" placeholder="Enter API key or leave blank for public access" style="
@@ -1552,9 +1563,10 @@ fileInput.addEventListener('change', e => { if (e.target.files[0]) handleFile(e.
 async function handleFile(file) {
   uploadedFile = file;
   $('fileName').textContent = file.name;
-  $('fileMeta').textContent = `${(file.size / 1024).toFixed(1)} KB · Parsing...`;
+  $('fileMeta').textContent = `${(file.size / 1024).toFixed(1)} KB · Uploading...`;
   uploadZone.style.display = 'none';
   $('fileInfoBox').style.display = 'block';
+  $('sheetPicker').style.display = 'none';
   $('btnStart').disabled = true;
   $('btnStart').textContent = 'Uploading...';
   $('btnStart').style.opacity = '0.5';
@@ -1573,11 +1585,56 @@ async function handleFile(file) {
     }
 
     sessionId = data.session_id;
-    isinsCount = data.count;
-    $('fileMeta').textContent = `${(file.size / 1024).toFixed(1)} KB · ${data.count} ISINs detected · Sheet: ${data.sheet_name}`;
-    $('btnStart').disabled = false;
-    $('btnStart').textContent = 'Begin Enrichment Pipeline';
-    $('btnStart').style.opacity = '1';
+
+    if (data.auto_selected) {
+      // CSV or single-sheet Excel — already parsed
+      isinsCount = data.count;
+      $('fileMeta').textContent = `${(file.size / 1024).toFixed(1)} KB · ${data.count} ISINs detected · Sheet: ${data.sheet_name}`;
+      $('btnStart').disabled = false;
+      $('btnStart').textContent = 'Begin Enrichment Pipeline';
+      $('btnStart').style.opacity = '1';
+    } else {
+      // Multiple sheets — show picker
+      const sel = $('sheetSelect');
+      sel.innerHTML = data.sheets.map(s => `<option value="${s}">${s}</option>`).join('');
+      $('sheetPicker').style.display = 'block';
+      $('fileMeta').textContent = `${(file.size / 1024).toFixed(1)} KB · ${data.sheets.length} sheets found — select one below`;
+      $('btnStart').disabled = true;
+      $('btnStart').textContent = 'Select a sheet first';
+      $('btnStart').style.opacity = '0.5';
+
+      // When user picks a sheet, call /api/select-sheet
+      sel.onchange = async () => {
+        const chosen = sel.value;
+        $('fileMeta').textContent = `${(file.size / 1024).toFixed(1)} KB · Loading sheet "${chosen}"...`;
+        $('btnStart').disabled = true;
+        $('btnStart').textContent = 'Loading...';
+        $('btnStart').style.opacity = '0.5';
+
+        try {
+          const r2 = await fetch(`/api/select-sheet?session_id=${sessionId}&sheet_name=${encodeURIComponent(chosen)}`, { method: 'POST' });
+          const d2 = await r2.json();
+
+          if (d2.error) {
+            $('fileMeta').textContent = `Error: ${d2.error}`;
+            $('btnStart').textContent = 'Sheet Error';
+            return;
+          }
+
+          isinsCount = d2.count;
+          $('fileMeta').textContent = `${(file.size / 1024).toFixed(1)} KB · ${d2.count} ISINs detected · Sheet: ${d2.sheet_name}`;
+          $('btnStart').disabled = false;
+          $('btnStart').textContent = 'Begin Enrichment Pipeline';
+          $('btnStart').style.opacity = '1';
+        } catch (err2) {
+          $('fileMeta').textContent = `Error selecting sheet: ${err2.message}`;
+          $('btnStart').textContent = 'Error';
+        }
+      };
+
+      // Auto-trigger for first sheet
+      sel.dispatchEvent(new Event('change'));
+    }
   } catch (err) {
     $('fileMeta').textContent = `Connection error — is the server running? (python server.py)`;
     $('btnStart').textContent = 'Server Unavailable';

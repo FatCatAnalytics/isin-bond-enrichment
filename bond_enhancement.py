@@ -723,7 +723,7 @@ def main():
     parser.add_argument('--template', help='Capital IQ Excel template file')
     parser.add_argument('--api-key', help='OpenFIGI API key (optional)')
     parser.add_argument('--limit', type=int, default=None, help='Limit number of ISINs to process')
-    parser.add_argument('--sheet-name', default='Bank AG', help='Sheet name to read ISINs from')
+    parser.add_argument('--sheet-name', default=None, help='Sheet name to read ISINs from (auto-detects if omitted)')
     parser.add_argument('--skip-openfigi', action='store_true', help='Skip OpenFIGI lookup')
     parser.add_argument('--skip-capiq', action='store_true', help='Skip Capital IQ enrichment')
     parser.add_argument('--ciq-batch-size', type=int, default=2000,
@@ -743,10 +743,43 @@ def main():
     print("Loading ISINs from input file...")
 
     try:
-        df = pd.read_excel(args.input_file, sheet_name=args.sheet_name,
-                           nrows=args.limit, engine='openpyxl')
+        if args.input_file.endswith('.csv'):
+            df = pd.read_csv(args.input_file, nrows=args.limit)
+            sheet_used = 'CSV'
+        else:
+            from openpyxl import load_workbook
+            wb = load_workbook(args.input_file, read_only=True, data_only=True)
+            available_sheets = wb.sheetnames
+            wb.close()
+            print(f"  Available sheets: {available_sheets}")
+
+            if args.sheet_name:
+                if args.sheet_name in available_sheets:
+                    sheet_used = args.sheet_name
+                else:
+                    print(f"  ⚠ Sheet '{args.sheet_name}' not found, using first sheet: '{available_sheets[0]}'")
+                    sheet_used = available_sheets[0]
+            elif len(available_sheets) == 1:
+                sheet_used = available_sheets[0]
+            else:
+                # Interactive: let user pick
+                print(f"\n  Multiple sheets found. Please choose:")
+                for i, name in enumerate(available_sheets):
+                    print(f"    [{i+1}] {name}")
+                choice = input(f"  Enter number (1-{len(available_sheets)}) or sheet name: ").strip()
+                if choice.isdigit() and 1 <= int(choice) <= len(available_sheets):
+                    sheet_used = available_sheets[int(choice) - 1]
+                elif choice in available_sheets:
+                    sheet_used = choice
+                else:
+                    print(f"  Invalid choice, using first sheet: '{available_sheets[0]}'")
+                    sheet_used = available_sheets[0]
+
+            df = pd.read_excel(args.input_file, sheet_name=sheet_used,
+                               nrows=args.limit, engine='openpyxl')
+
         print(f"  File: {args.input_file}")
-        print(f"  Sheet: {args.sheet_name}")
+        print(f"  Sheet: {sheet_used}")
         print(f"  Rows: {len(df)}")
     except Exception as e:
         print(f"ERROR loading input file: {e}")
