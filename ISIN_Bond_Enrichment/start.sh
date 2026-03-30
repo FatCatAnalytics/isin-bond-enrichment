@@ -136,7 +136,7 @@ if [ $? -ne 0 ]; then
     echo -e "                  ${DIM}fastapi, uvicorn, pandas, openpyxl,${RESET}"
     echo -e "                  ${DIM}requests, websockets, python-multipart${RESET}"
     echo ""
-    pip install -r requirements.txt --quiet --disable-pip-version-check 2>/dev/null
+    pip install -r requirements.txt --quiet --disable-pip-version-check --trusted-host pypi.org --trusted-host files.pythonhosted.org --trusted-host pypi.python.org 2>/dev/null
     if [ $? -ne 0 ]; then
         echo ""
         echo -e "   ${RED}ERROR: Failed to install dependencies.${RESET}"

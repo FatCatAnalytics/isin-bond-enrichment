@@ -177,7 +177,7 @@ set /a EMPTY=10-FILLED
 call :build_bar
 <nul set /p =     [!BAR!] !CURRENT!/!TOTAL!  Installing !PKG! ...
 
-pip install "!PKG!" --quiet --disable-pip-version-check >"%TEMP%\pip_out.txt" 2>&1
+pip install "!PKG!" --quiet --disable-pip-version-check --trusted-host pypi.org --trusted-host files.pythonhosted.org --trusted-host pypi.python.org >"%TEMP%\pip_out.txt" 2>&1
 if errorlevel 1 (
     echo  FAILED
     echo.
